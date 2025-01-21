@@ -3,9 +3,9 @@ from openfermion import QubitOperator as Q
 from numpy.random import uniform
 from numpy import sin, cos
 from numpy import arctan2 as atan2
-from utils_basic import (
-    is_anticommuting, 
-    random_pauli_term, 
+from SolvableQubitHamiltonians.utils_basic import (
+    is_anticommuting,
+    random_pauli_term,
     clifford
 )
 
@@ -78,31 +78,31 @@ def map_pauli_to_z0(P):
 
     if P == Q('Z0'):
         return [Q("")]
-    
+
     elif (P == Q('X0')) or (P == Q('Y0')):
         return [clifford(Q('Z0'), P)]
-    
+
     else:
         Pterm     = list(P.terms.keys())[0]
         op        = Pterm[0]
-        i, letter = op[0], op[1] 
+        i, letter = op[0], op[1]
 
         if letter == 'Z':
             ac_op = Q(f'X{i}')
-        
+
         elif letter in ['X', 'Y']:
             ac_op = Q(f'Z{i}')
 
         U_list = [clifford(P, ac_op)]
-        
+
         if ac_op == Q('Z0'):
             return U_list
-        
+
         elif ac_op == Q('X0'):
             x_to_z = clifford(Q('X0'), Q('Z0'))
             U_list.append(x_to_z)
             return U_list
-        
+
         else:
             if list(ac_op.terms.keys())[0][0][1] == 'X':
                 pairing_U = clifford(
@@ -125,7 +125,7 @@ def map_pauli_to_z0(P):
                 U_list.append(pairing_U)
                 U_list.append(x_to_z)
                 return U_list
-            
+
 def ac_hamiltonian_solver(H):
 
     assert is_ac_hamiltonian(H)

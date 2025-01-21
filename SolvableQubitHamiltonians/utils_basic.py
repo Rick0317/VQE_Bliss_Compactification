@@ -1,6 +1,7 @@
 import numpy as np
 import networkx as nx
 from openfermion import QubitOperator as Q
+from openfermion import FermionOperator as FO
 from openfermion import MajoranaOperator as M
 from openfermion import hermitian_conjugated as dagger
 from openfermion import commutator, anticommutator, get_fermion_operator
@@ -18,8 +19,17 @@ def copy_hamiltonian(H):
     assert (H - H_copy) == Q().zero()
     return H_copy
 
+def copy_ferm_hamiltonian(H: FO):
+    H_copy = FO().zero()
+
+    for t, s in H.terms.items():
+        H_copy += s * FO(t)
+
+    assert (H - H_copy) == FO().zero()
+    return H_copy
+
 def random_pauli_term(Nqubits):
-    
+
     letters = ['X', 'Y', 'Z', 'I']
 
     term_tuple = []
@@ -95,7 +105,7 @@ def is_termwise_symmetry(H, S):
     return True
 
 def introduce_symmetries(H, syms):
-    
+
     Hsym = Q()
 
     for term, coef in H.terms.items():
@@ -104,7 +114,7 @@ def introduce_symmetries(H, syms):
         for S in syms:
             if uniform(0, 1) < 0.5:
                 current_sym = current_sym * S
-        
+
         Hsym += coef * Q(term) * current_sym
 
     return Hsym

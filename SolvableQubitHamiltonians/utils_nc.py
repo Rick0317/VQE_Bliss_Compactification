@@ -1,18 +1,18 @@
 import numpy as np
 from openfermion import QubitOperator as Q
 
-from utils_basic import (
+from SolvableQubitHamiltonians.utils_basic import (
     is_commuting,
     is_anticommuting,
     copy_hamiltonian,
     compute_product_of_unitaries
 )
 
-from utils_ac import (
+from SolvableQubitHamiltonians.utils_ac import (
     obtain_SO_solving_unitary
 )
 
-from utils_fc import (
+from SolvableQubitHamiltonians.utils_fc import (
     decimal_to_binary_list,
     obtain_generators,
     obtain_polynomial_representation_of_fc_hamiltonian,
@@ -85,7 +85,7 @@ def verify_twac_fc_property_for_cliques(twac_fc_cliques):
                     for s, _ in clique_j.terms.items():
                         if not is_anticommuting(t, s):
                             return False
-                        
+
     return True
 
 def is_nc_hamiltonian(H):
@@ -130,7 +130,7 @@ def solve_multiple_twc_fc_hamiltonians(H_list, N, C_list=None, start_idx=0):
 
     else:
         return_C_list = False
-    
+
     p = [obtain_polynomial_representation_of_fc_hamiltonian(fc, N, generators=C_list) for fc in H_list]
     U = solve_multiple_independent_commuting_generators(C_list, start_idx=start_idx)
 
@@ -140,7 +140,7 @@ def solve_multiple_twc_fc_hamiltonians(H_list, N, C_list=None, start_idx=0):
 
 def factorize_nc_hamiltonian(H, N):
     """
-    obtain representation of non-contextual Hamiltonian as a linear combination of anti-commuting Pauli operators, where 
+    obtain representation of non-contextual Hamiltonian as a linear combination of anti-commuting Pauli operators, where
     coefficients are twc-fc Hamiltonians, along with the tapering clifford which maps the twc-fc Hamiltonians to ising Hamiltonians
     """
     fc_clique = obtain_fc_clique(H)
@@ -193,7 +193,7 @@ def move_z_string_to_polynomial(p, A, K):
 
     def ptilde(C):
         return p(C) * evaluate_product_based_on_z_string_support(C, z_string)
-    
+
     return ptilde, Atilde
 
 def convert_to_tilde_representation(p, A, K):
@@ -218,7 +218,7 @@ def obtain_nc_hamiltonian_blocks(ptilde, Atilde):
 
     def Ham(v):
         return sum([ptilde[i](v)*Atilde[i] for i in range(len(Atilde))])
-    
+
     return Ham
 
 def obtain_nc_unitary_blocks(ptilde, Atilde):
@@ -231,7 +231,7 @@ def obtain_nc_unitary_blocks(ptilde, Atilde):
         Hv.compress()
         _, _, Uv = obtain_SO_solving_unitary(Hv)
         return Uv
-    
+
     return Unit
 
 def obtain_nc_diagonal_blocks(ptilde, Atilde, K):
@@ -239,7 +239,7 @@ def obtain_nc_diagonal_blocks(ptilde, Atilde, K):
     def Diag(v):
         L = len(Atilde) - 1
         return ptilde[0](v) + np.linalg.norm([ptilde[i](v) for i in range(1, L + 1)]) * Q(f'Z{K}')
-    
+
     return Diag
 
 def obtain_nc_hamiltonian_eigenvalues(ptilde, K):
@@ -247,7 +247,7 @@ def obtain_nc_hamiltonian_eigenvalues(ptilde, K):
     def E_H(v, w):
         L = len(ptilde) - 1
         return ptilde[0](v) + np.linalg.norm([ptilde[i](v) for i in range(1, L + 1)]) * w
-    
+
     return E_H
 
 def obtain_nc_hamiltonian_blocks_rotation_and_eigenvalues(ptilde, Atilde, K):
@@ -275,5 +275,5 @@ def obtain_product_form_of_unit(Unit):
 
     def Unit_product(v):
         return compute_product_of_unitaries(Unit(v))
-    
+
     return Unit_product

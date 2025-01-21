@@ -10,16 +10,16 @@ from openfermion import (
     bravyi_kitaev
 )
 from openfermion.ops import operators
-from utils_basic import (
+from SolvableQubitHamiltonians.utils_basic import (
     is_commuting,
     is_anticommuting,
     copy_hamiltonian
 )
-from utils_ff import (
+from SolvableQubitHamiltonians.utils_ff import (
     obtain_ac_graph,
     is_line_graph
 )
-from qwc_decomposition import qwc_decomposition
+from SolvableQubitHamiltonians.qwc_decomposition import qwc_decomposition
 import pickle
 import sys
 
@@ -299,14 +299,14 @@ def save_decomposition(decomp, moltag, methodtag):
 
 
 if __name__ == '__main__':
-    moltag = "beh2"
+    moltag = "lih"
     methodtag = "fc"
 
     N      = N_QUBITS[moltag]
     H      = load_hamiltonian(moltag)
     Hcopy  = copy_hamiltonian(H)
-    # decomp = sorted_insertion_decomposition(Hcopy, methodtag)
-    decomp =  qwc_decomposition(Hcopy)
+    decomp = sorted_insertion_decomposition(Hcopy, methodtag)
+    # decomp =  qwc_decomposition(Hcopy)
     var    = variance_metric(H, decomp, N)
 
     l1     = l1_norm(H)

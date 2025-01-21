@@ -4,11 +4,11 @@ from numpy.random import uniform
 from openfermion import QubitOperator as Q
 from openfermion import MajoranaOperator as M
 from openfermion import jordan_wigner, get_fermion_operator
-from utils_la import (
+from SolvableQubitHamiltonians.utils_la import (
     SO_real_schur,
     obtain_orthogonal_generator
 )
-from utils_basic import (
+from SolvableQubitHamiltonians.utils_basic import (
     is_anticommuting,
     close_qubit_hamiltonian_algebra,
     apply_unitary_product,
@@ -16,12 +16,12 @@ from utils_basic import (
     random_pauli_term,
     obtain_ac_graph
 )
-from utils_fc import (
+from SolvableQubitHamiltonians.utils_fc import (
     obtain_generators,
     obtain_polynomial_representation_of_fc_hamiltonian,
     solve_multiple_independent_commuting_generators
 )
-from utils_nc import (
+from SolvableQubitHamiltonians.utils_nc import (
     obtain_z_string
 )
 
@@ -68,8 +68,8 @@ def K3_correct_root(G):
     G is a graph isomorphic to K3
     return is root graph R of G that is isomorphic to G
 
-    this function is needed since nx.inverse_line_graph will give the claw graph which is 
-    not what I want 
+    this function is needed since nx.inverse_line_graph will give the claw graph which is
+    not what I want
     """
     Gnodes = list(G.nodes)
     R      = nx.Graph()
@@ -110,7 +110,7 @@ def obtain_ff_coef_matrix(H, N):
 
 def obtain_ff_solver(H, N):
     """
-    return 
+    return
         1. diagonalized single particle Hamiltonian from which eigenvalues can be derived
         2. special orthogonal single-particle-basis transformation
         3. and MajoranaOperator form of generator of diagonalizing unitary over the Fock space
@@ -147,7 +147,7 @@ def obtain_fundamental_cycles(G):
             from_paths[node] = []
 
         else:
-            
+
             to_path    = []
             path_nodes = paths[node]
             for i in range(len(path_nodes) - 1):
@@ -203,7 +203,7 @@ def obtain_operator_to_index_pair_dictionary(G):
     D          = dict()
     for edge, index_pair in edge2index.items():
         op    = edge_intersection(edge)
-        D[op] = index_pair 
+        D[op] = index_pair
     return D
 
 def obtain_index_pair_to_operator_dictionary(G):
@@ -224,7 +224,7 @@ def obtain_edge_to_operator_dictionary(G):
     return D
 
 def obtain_operator_to_edge_dictionary(G):
-    op2index   = obtain_operator_to_index_pair_dictionary(G) 
+    op2index   = obtain_operator_to_index_pair_dictionary(G)
     index2edge = obtain_index_pair_to_edge_dictionary(G)
     D          = dict()
     for op, index_pair in op2index.items():
@@ -293,7 +293,7 @@ def solve_ff_qubit_hamiltonian(H):
     H         = close_qubit_hamiltonian_algebra(H)
     G         = obtain_ac_graph(H)
     R         = obtain_root_graph(G)
-    Nmodes    = len(R.nodes) 
+    Nmodes    = len(R.nodes)
     op2indexC = obtain_all_root_graph_dictionaries(R)[-1]
 
     Hm = M()
@@ -363,7 +363,7 @@ def factorize_cycle_symmetries(H, N):
     for term, coef in Hr.terms.items():
         z_string     = obtain_z_string(Q(term), K)
         alg_op_tilde = z_string * Q(term)
-        
+
         z_strings.append(coef * z_string)
         alg_ops_tilde.append(alg_op_tilde)
 
@@ -376,10 +376,10 @@ def factorize_cycle_symmetries(H, N):
     return alg_ops, C, p, Uc
 
 def obtain_ff_hamiltonian_blocks(p, Atilde):
-    
+
     def Ham(v):
         return sum([p[i](v)*Atilde[i] for i in range(len(p))])
-    
+
     return Ham
 
 def obtain_ff_generator_blocks(p, Atilde):
