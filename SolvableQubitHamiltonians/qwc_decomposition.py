@@ -1,10 +1,11 @@
 import numpy as np
 from paulis import PauliString
-from openfermion import QubitOperator
+from openfermion import QubitOperator, FermionOperator, bravyi_kitaev
 
 
 def qwc_decomposition(Hqub):
     sorted_terms = sorted(Hqub.terms, key=lambda x: np.abs(Hqub.terms[x]), reverse=True)
+    print(sorted_terms[10])
     groups = []
 
     for term in sorted_terms:
@@ -81,3 +82,28 @@ def qwc_decomposition_commutator(Hqub, A):
         decomp.append(qubit_op)
 
     return decomp
+
+
+def abs_of_dict_value(x):
+    return np.abs(x[1])
+
+
+def ferm_to_qubit(H: FermionOperator):
+    Hqub = bravyi_kitaev(H)
+    Hqub -= Hqub.constant
+    Hqub.compress()
+    Hqub.terms = dict(
+    sorted(Hqub.terms.items(), key=abs_of_dict_value, reverse=True))
+    return Hqub
+
+
+if __name__ == "__main__":
+    import pickle
+
+    filename = f'ham_lib/lih_fer.bin'
+    with open(filename, 'rb') as f:
+        Hamil = pickle.load(f)
+
+    H_q = ferm_to_qubit(Hamil)
+    decomp = qwc_decomposition(H_q)
+    print("Original Decomposition Complete")

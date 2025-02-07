@@ -1,6 +1,5 @@
 from openfermion import QubitOperator
 
-
 class PauliOp:
     def __init__(self, op):
         self.index, self.pauli = op
@@ -30,6 +29,9 @@ class PauliString:
             (index, pauli) for index, pauli in self.pauli_ops.items())
         return QubitOperator(qubit_terms, coeff)
 
+    def get_pauli_ops(self):
+        return self.pauli_ops
+
     def __add__(self, other):
         if not isinstance(other, PauliString):
             raise TypeError("Can only add PauliString objects.")
@@ -42,7 +44,18 @@ class PauliString:
         return str(self.pauli_ops)
 
 
+def pauli_ops_to_qop(pauli_ops: dict):
+    pauli_string = ''
+    for key in pauli_ops:
+        pauli = pauli_ops[key]
+        if pauli != 'I':
+            pauli_string += pauli + str(key) + ' '
+
+    return QubitOperator(pauli_string)
+
+
 if __name__ == '__main__':
     p1 = PauliString(((0, 'X'), (4, 'Z')))
     p2 = PauliString(((0, 'X'), (1, 'Z'), (2, 'Z'), (3, 'Y')))
-    print(p1 + p2)
+
+
