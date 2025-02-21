@@ -186,81 +186,52 @@ def select_paulis(frag_combs, original_decomp, N, psi):
         frag_b = original_decomp[index_b]
 
         # Get the matrix in the linear symplectic vector space F
-        # corresponding to the expression in Eq (20)
-        matrix_M = []
-
-        for term, coeff in frag_a.terms.items():
-            pauli = PauliString(term)
-            pauli_vec = SpaceFVector(pauli, N)
-            matrix_M.append(pauli_vec.get_vector())
-
-        for term, coeff in frag_b.terms.items():
-            pauli = PauliString(term)
-            pauli_vec = SpaceFVector(pauli, N)
-            matrix_M.append(pauli_vec.get_vector())
+        matrix_M = [SpaceFVector(PauliString(term), N).get_vector() for term in
+                    frag_a.terms]
+        matrix_M += [SpaceFVector(PauliString(term), N).get_vector() for term in
+                     frag_b.terms]
 
         exe_matrix_M = np.array(matrix_M)
-
         n_cols = exe_matrix_M.shape[1]
 
-        ### Pauli Product selection ###
-        binary_vectors = list(product([1, 0], repeat=n_cols))
-
         # Filter binary vectors in the null space of exe_matrix_M
-        # This will be the corresponding Pauli product to be added.
-        null_space_vectors = []
-        for vec in binary_vectors:
-            vec = np.array(vec)
-            if np.all(np.dot(exe_matrix_M,
-                             vec) % 2 == 0):  # Mod 2 for binary operations
-                null_space_vectors.append(vec)
+        null_space_vectors = [
+            np.array(vec) for vec in product([1, 0], repeat=n_cols)
+            if np.all(np.dot(exe_matrix_M, vec) % 2 == 0)
+        ]
 
+        counter = 1
         for vec in null_space_vectors:
-
-            pauli = matrix_J(N) @ np.array(vec)
-
-
-            pauli_op = vector_2_pauli(pauli, N)
+            pauli_op = vector_2_pauli(matrix_J(N) @ vec, N)
             qubit_op = pauli_ops_to_qop(pauli_op.get_pauli_ops())
-
-            # print(
-            #     f"Do pauli commute with fragment a: {check_commutativity(frag_a, qubit_op)}")
-            # print(
-            #     f"Do pauli commute with fragment b: {check_commutativity(frag_b, qubit_op)}")
-
             var_psi_pauli = variance(gso(qubit_op, N), psi)
 
             if var_psi_pauli > 0.9:
-
-                print(f"Variance of this pauli op: {var_psi_pauli}")
-
-                ## Calculate m_a
                 var_psi_ha = np.sqrt(variance(gso(frag_a, N), psi))
-                m_a = var_psi_ha / variance_sum
-
-                ## Calculate m_b
                 var_psi_hb = np.sqrt(variance(gso(frag_b, N), psi))
-                m_b = var_psi_hb / variance_sum
-
+                m_a, m_b = var_psi_ha / variance_sum, var_psi_hb / variance_sum
                 mu = m_a * m_b / (m_a + m_b)
 
-                ## Calculate Cov(H_a, P), Cov(H_b, P)
-                cov_a_pauli = expectation(gso(frag_a, N) * gso(qubit_op, N), psi) - expectation(gso(frag_a, N), psi) * expectation(gso(qubit_op, N), psi)
-                cov_b_pauli = expectation(gso(frag_b, N) * gso(qubit_op, N), psi) - expectation(gso(frag_b, N), psi) * expectation(gso(qubit_op, N), psi)
+                cov_a_pauli = expectation(gso(frag_a, N) * gso(qubit_op, N),
+                                          psi) - expectation(gso(frag_a, N),
+                                                             psi) * expectation(
+                    gso(qubit_op, N), psi)
+                cov_b_pauli = expectation(gso(frag_b, N) * gso(qubit_op, N),
+                                          psi) - expectation(gso(frag_b, N),
+                                                             psi) * expectation(
+                    gso(qubit_op, N), psi)
 
-
-                d_of_pauli = (m_a * cov_b_pauli - m_b * cov_a_pauli) / (m_a + m_b)
+                d_of_pauli = (m_a * cov_b_pauli - m_b * cov_a_pauli) / (
+                            m_a + m_b)
                 c = d_of_pauli / var_psi_pauli
-
-                variance_reduction = get_variance_reduction(c, d_of_pauli, var_psi_pauli) / mu
-
+                variance_reduction = get_variance_reduction(c, d_of_pauli,
+                                                            var_psi_pauli) / mu
 
                 if variance_reduction > 1e-5:
                     print(f"Variance reduction: {variance_reduction}")
-
                     pauli_added_combs.append((c, qubit_op, index_a, index_b))
 
-            del qubit_op, pauli_op
+        del qubit_op, pauli_op, frag_a, frag_b, matrix_M, exe_matrix_M, null_space_vectors
 
     return pauli_added_combs
 
@@ -348,7 +319,7 @@ def copy_hamiltonian(H):
 
 
 def load_hamiltonian(moltag):
-    filename = f'../../SolvableQubitHamiltonians/ham_lib/beh2_fer.bin'
+    filename = f'../../SolvableQubitHamiltonians/ham_lib/h4_sto-3g.pkl'
     with open(filename, 'rb') as f:
         Hfer = pickle.load(f)
     Hqub = bravyi_kitaev(Hfer)
@@ -361,9 +332,9 @@ def load_hamiltonian(moltag):
 if __name__ == '__main__':
     import pickle
 
-    N = 12
+    N = 8
 
-    Hqub = load_hamiltonian("lih")
+    Hqub = load_hamiltonian("")
 
     sparse = gso(Hqub)
     psi = ggs(sparse)[1]
@@ -374,7 +345,11 @@ if __name__ == '__main__':
     # decomp = qwc_decomposition(H_q)
 
     H_q2 = copy_hamiltonian(Hqub)
-    decomp = sorted_insertion_decomposition(H_q2, "fc")
+    decomp = qwc_decomposition(H_q2)
+    for tpw_idx, tpw in enumerate(decomp[0].terms):
+        print(tpw)
+        print(decomp[0].terms[tpw])
+    exit()
     exectation_original = 0
     for fragment in decomp:
         exectation_original += expectation(gso(fragment, N), psi)

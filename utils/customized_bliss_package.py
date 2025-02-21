@@ -65,6 +65,15 @@ def construct_H_bliss_mu3_customizable(H, params, N, Ne, idx_list):
 
 
 def optimize_bliss_mu3_customizable(H, N, Ne, idx_list):
+    """
+    Get the analytical form of the 1-Norm with respect to the coefficients
+    of the killer terms.
+    :param H: Hamiltonian
+    :param N: Number of orbitals
+    :param Ne: Number of electrons
+    :param idx_list:
+    :return:
+    """
     one_norm_func, one_norm_expr = generate_analytical_one_norm_3_body_specific(H, N, Ne, idx_list)
     idx_len = len(idx_list)
     def optimization_wrapper(params):
