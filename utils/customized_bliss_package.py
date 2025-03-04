@@ -53,6 +53,7 @@ def construct_H_bliss_mu3_customizable(H, params, N, Ne, idx_list):
 
     idx_len = len(idx_list)
     result = H
+
     mu_3 = params[0]
     t = params[1:1 + idx_len]
 
@@ -61,7 +62,7 @@ def construct_H_bliss_mu3_customizable(H, params, N, Ne, idx_list):
     result -= mu_3 * (total_number_operator ** 3 - Ne ** 3)
     result -= t_ferm * (total_number_operator - Ne)
 
-    return result
+    return result, t_ferm * (total_number_operator - Ne)
 
 
 def optimize_bliss_mu3_customizable(H, N, Ne, idx_list):

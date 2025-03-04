@@ -1,4 +1,6 @@
 import pickle
+
+import numpy as np
 from openfermion import (
 normal_ordered,
 FermionOperator,
@@ -33,8 +35,22 @@ from utils.measurement_utils.shared_paulis import (
     get_pauli_coeff_map,
     qubit_op_to_list
 )
-import os
-import csv
+from utils.reference_state_utils import get_cisd_gs
+import time
+from itertools import combinations
+from scipy.sparse.linalg import eigsh
+from utils.measurement_utils.shared_paulis import (
+    get_sharable_paulis,
+    get_share_pauli_only_decomp,
+    get_pw_grp_idxes_no_fix_len,
+    get_overlapping_decomp,
+    get_sharable_only_decomp,
+    get_coefficient_orderings,
+    get_all_pw_indices,
+    get_pauli_coeff_map,
+    qubit_op_to_list
+)
+
 from utils.measurement_utils.coefficient_optimizer import (
 get_split_measurement_variance_unconstrained,
 get_meas_alloc,
@@ -42,8 +58,9 @@ optimize_coeffs,
 optimize_coeffs_parallel
 
 )
-import time
-from itertools import combinations
+
+import os
+import csv
 
 def abs_of_dict_value(x):
     return np.abs(x[1])
@@ -86,71 +103,43 @@ def sz_operator(num_spin_orbitals):
     return sz_op
 
 
-def prepare_superposition_state(n_qubits, n_particles, coefficients=None):
-    """
-    Prepare a superposition of quantum states with a fixed number of particles.
+def get_hartree_fock(num_spin_orbitals, num_particles):
+    state = np.zeros(2 ** num_spin_orbitals, dtype=np.complex128)
+    binary_index = sum(2 ** q for q in
+                          range(num_particles))
+    state[binary_index] = 1
 
-    Args:
-        n_qubits (int): Number of qubits (fermionic modes).
-        n_particles (int): Number of occupied particles.
-        coefficients (list, optional): Coefficients for superposition. Defaults to equal superposition.
-
-    Returns:
-        np.ndarray: Normalized statevector representing the superposition.
-    """
-    # Generate all possible combinations of occupied orbitals
-    occupied_combinations = list(combinations(range(n_qubits), n_particles))
-
-    # Initialize the statevector
-    statevector = np.zeros(2 ** n_qubits, dtype=complex)
-
-    # If no coefficients are provided, use equal superposition
-    if coefficients is None:
-        coefficients = np.ones(len(occupied_combinations),
-                               dtype=complex) / np.sqrt(
-            len(occupied_combinations))
-
-    # Construct the superposition state
-    for i, occupied_orbitals in enumerate(occupied_combinations):
-        basis_index = sum(2 ** q for q in
-                          occupied_orbitals)  # Convert binary occupation to decimal index
-        statevector[basis_index] += coefficients[i]  # Add weighted contribution
-
-    # Normalize the statevector
-    statevector /= np.linalg.norm(statevector)
-
-    return statevector
+    return state
 
 
-def jordan_wigner_transform(state_fermion, num_qubits):
-    """
-    Transforms a fermionic state vector to the qubit state vector
-    using the Jordan-Wigner transformation.
+def generate_fixed_particle_basis(n_spin_orbitals, n_particles):
+    """ Generate all basis states for a given particle number. """
+    basis = []
+    for state in combinations(range(n_spin_orbitals), n_particles):
+        basis.append(sum(1 << i for i in state))  # Binary encoding
+    return basis
 
-    :param state_fermion: The state vector in fermionic basis (numpy array)
-    :param num_qubits: The number of qubits in the system
-    :return: Transformed state vector in qubit basis
-    """
-    state_qubit = np.copy(state_fermion)
 
-    # Perform the Jordan-Wigner transformation by applying the appropriate phase factors
-    for i in range(num_qubits):
-        # Apply phase factor (-1)^k to the state to simulate the fermionic anticommutation relations
-        for j in range(i):
-            state_qubit = np.roll(state_qubit,
-                                  2 ** j)  # shifting the state vector
-            state_qubit = np.multiply(state_qubit,
-                                      (-1) ** j)  # applying the (-1)^j factor
+def project_hamiltonian(H, basis):
+    """ Project the full Hamiltonian onto the fixed-particle-number subspace. """
+    n = len(basis)
+    subspace_H = np.zeros((n, n))
 
-    return state_qubit
+    for i, b_i in enumerate(basis):
+        for j, b_j in enumerate(basis):
+            if i <= j:  # Only compute upper triangle (symmetric matrix)
+                subspace_H[i, j] = H[b_i, b_j]
+                subspace_H[j, i] = subspace_H[i, j]
+
+    return subspace_H
 
 
 if __name__ == '__main__':
-    N = 8
-    Ne = 4
-    mol_name = "H2O"
+    N = 14
+    Ne = 10
+    mol_name = "h2o"
 
-    filename = f'../../SolvableQubitHamiltonians/ham_lib/h4_sto-3g.pkl'
+    filename = f'../../SolvableQubitHamiltonians/ham_lib/h2o_fer.bin'
 
     with open(filename, 'rb') as f:
         Hamil = pickle.load(f)
@@ -186,58 +175,6 @@ if __name__ == '__main__':
 
     ]
 
-    # System parameters
-    num_spin_orbitals = N  # Must be even
-    num_particles = Ne  # Total number of particles (even to allow S_z = 0)
-    num_up = num_particles // 2  # Half goes to spin-up
-    num_down = num_particles // 2  # Half goes to spin-down
-
-    # Generate basis states separately for spin-up (even indices) and spin-down (odd indices)
-    spin_up_basis = list(
-        combinations(range(0, num_spin_orbitals, 2), num_up))  # Even indices
-    spin_down_basis = list(
-        combinations(range(1, num_spin_orbitals, 2), num_down))  # Odd indices
-
-    # Generate all valid Fock basis states with equal up and down electrons
-    basis_states = [up + down for up in spin_up_basis for down in
-                    spin_down_basis]
-
-    # Initialize a zero state
-    state_vector = np.zeros(2 ** num_spin_orbitals, dtype=complex)
-
-    # Assign random amplitudes to valid states
-    for basis in basis_states:
-        index = sum(
-            1 << i for i in basis)  # Convert bit positions to decimal index
-        state_vector[index] = np.random.rand() + 1j * np.random.rand()
-
-    # Normalize the state
-    state_vector /= np.linalg.norm(state_vector)
-
-    ground_state = state_vector
-
-    total_number_operator = FermionOperator()
-    for mode in range(N):
-        total_number_operator += FermionOperator(((mode, 1), (mode, 0)))
-
-    sparse_matrix = gso(total_number_operator, N)
-
-    # Step 3: Convert to a dense matrix (optional)
-    dense_matrix = sparse_matrix.toarray()
-
-    particle_number = np.real(ground_state.conj().T @ dense_matrix @ ground_state)
-    print(f"Particle Number: {particle_number}")
-
-    sz_sparse = gso(sz_operator(num_spin_orbitals), N)
-
-    sz_in_spin_orbitals = sz_sparse.toarray()
-
-    sz_value = np.real(
-        ground_state.conj().T @ sz_in_spin_orbitals @ ground_state)
-    print(f"Sz: {sz_value}")
-
-
-
     for i in range(len(anti_com_list)):
         G = anti_com_list[i]
         hamil_copy1 = copy_ferm_hamiltonian(ordered_hamil)
@@ -249,55 +186,31 @@ if __name__ == '__main__':
         H = normal_ordered(commutator)
         H_in_q = ferm_to_qubit(H)
 
-        # <[H, A]>
+        energy, cisd_state = get_cisd_gs(mol_name, H_in_q, N, 'wfs', )
 
-        ground_state = ggs(gso(H_in_q, N))[1]
-        ground_state_ferm = ggs(gso(H, N))[1]
+        # ground_state_commute = ggs(gso(H_in_q, N))[1]
 
         # Define the total number operator N = sum_i a_i† a_i
         number_operator = FermionOperator()
-        for i in range(N):
-            number_operator += FermionOperator(f"{i}^ {i}")  # a_i† a_i
+        for mode in range(N):
+            number_operator += FermionOperator(f"{mode}^ {mode}")  # a_i† a_i
 
         # Convert to qubit operator using Jordan-Wigner transformation
         number_operator_qubit = bravyi_kitaev(number_operator)
 
-        print(f"Particle number: {expectation(gso(number_operator_qubit), ground_state)}")
         print(
-            f"Particle number: {expectation(gso(number_operator), ground_state_ferm)}")
+            f"Particle number Qubit: {expectation(gso(number_operator_qubit), cisd_state)}")
 
-        print(f"Sz Qubit: {expectation(gso(ferm_to_qubit(sz_operator(num_spin_orbitals)), N), ground_state)}")
-        print(f"Sz Ferm: {expectation(gso(sz_operator(num_spin_orbitals), N), ground_state_ferm)}")
 
-        original_exp = expectation(gso(H, N), ground_state_ferm)
-        print(f"Original Expectation value: {original_exp}")
+        print(
+            f"Sz Qubit: {expectation(gso(ferm_to_qubit(sz_operator(N)), N), cisd_state)}")
 
-        original_exp = expectation(gso(H_in_q, N), ground_state)
-        print(f"Original Expectation value2: {original_exp}")
 
-        two_body_h = FermionOperator()
-        three_body_h = FermionOperator()
+        original_exp = expectation(gso(H_in_q, N), cisd_state)
+        print(f"Original Expectation value Qubit: {original_exp}")
 
         two_body_list = filter_indices(H, N, Ne)
         if len(two_body_list) != 0:
-            majo = get_majorana_operator(two_body_h)
-
-            one_norm = 0
-            for term, coeff in majo.terms.items():
-                if term != ():
-                    one_norm += abs(coeff)
-
-            print("Original 1-Norm 2-body", one_norm)
-
-            majo = get_majorana_operator(three_body_h)
-
-            one_norm = 0
-            for term, coeff in majo.terms.items():
-                if term != ():
-                    one_norm += abs(coeff)
-
-            print("Original 1-Norm 3-body", one_norm)
-
 
             copied_H = copy_ferm_hamiltonian(H)
             H_q = ferm_to_qubit(copied_H)
@@ -306,7 +219,7 @@ if __name__ == '__main__':
             # decomp = sorted_insertion_decomposition(H_copy, methodtag)
             decomp = qwc_decomposition(H_copy)
             print("Original Decomposition Complete")
-            original_var = commutator_variance(H_q, decomp, N, ground_state)
+            original_var = commutator_variance(H_q, decomp, N, cisd_state).real
             print(f"Original variance: {original_var}")
 
             majo = get_majorana_operator(H)
@@ -319,24 +232,19 @@ if __name__ == '__main__':
             print("Original 1-Norm", one_norm)
 
             copied_H2 = copy_ferm_hamiltonian(H)
-            optimization_wrapper, initial_guess = optimize_bliss_mu3_customizable(copied_H2, N, Ne, two_body_list)
+            optimization_wrapper, initial_guess = optimize_bliss_mu3_customizable(
+                copied_H2, N, Ne, two_body_list)
 
-            # res = minimize(optimization_wrapper, initial_guess, method='BFGS',
-            #                options={'gtol': 1e-300, 'disp': True, 'maxiter': 600, 'eps': 1e-2})
-            # Try a different method that doesn't require gradients
             res = minimize(optimization_wrapper, initial_guess, method='Powell',
                            options={'disp': True, 'maxiter': 100000})
 
             H_before_modification = copy_ferm_hamiltonian(H)
-            bliss_output, killer = construct_H_bliss_mu3_customizable(H_before_modification, res.x, N, Ne, two_body_list)
+            bliss_output, killer = construct_H_bliss_mu3_customizable(
+                H_before_modification, res.x, N, Ne, two_body_list)
 
-            bliss_exp = expectation(gso(bliss_output, N), ground_state)
-            print(f"BLISS Expectation value: {bliss_exp}")
-
-            bliss_exp = expectation(gso(ferm_to_qubit(bliss_output), N), ground_state)
-            print(f"BLISS Expectation value: {bliss_exp}")
-
-            print(f"First 5 parameters: {res.x[:5]}")
+            bliss_exp = expectation(gso(ferm_to_qubit(bliss_output), N),
+                                    cisd_state)
+            print(f"BLISS Expectation value Qubit : {bliss_exp}")
 
             H_before_bliss_test = copy_ferm_hamiltonian(H)
             H_bliss_output_test = copy_ferm_hamiltonian(bliss_output)
@@ -346,6 +254,7 @@ if __name__ == '__main__':
             H_bliss_output = copy_ferm_hamiltonian(bliss_output)
             H_bliss_q = ferm_to_qubit(bliss_output)
             print("BLISS Complete. Obtained in Fermion and Qubit space")
+
             majo_blissed = get_majorana_operator(H_bliss_output)
             blissed_one_norm = 0
             for term, coeff in majo_blissed.terms.items():
@@ -356,32 +265,16 @@ if __name__ == '__main__':
 
             H_bliss_copy = copy_hamiltonian(H_bliss_q)
 
-            # blissed_decomp = sorted_insertion_decomposition(H_bliss_copy, methodtag)
             blissed_decomp = qwc_decomposition(H_bliss_copy)
             print("Blissed Decomposition Complete")
 
             H_decompose_copy = copy_hamiltonian(H_bliss_q)
 
             blissed_vars = commutator_variance(H_decompose_copy,
-                                               blissed_decomp.copy(), N, ground_state)
+                                               blissed_decomp.copy(), N,
+                                               cisd_state).real
 
             print(f"Blissed variance: {blissed_vars}")
-
-            # # Apply Ghost Pauli method
-            psi = ggs(gso(H_bliss_copy, N))[1]
-            # psi = ground_state
-            # bliss_ghost_decomp = update_decomp_w_ghost_paulis(psi, N, blissed_decomp)
-            # new_H_q = QubitOperator()
-            # for fragment in bliss_ghost_decomp:
-            #     new_H_q += fragment
-            #
-            # blissed_expectation = expectation(gso(new_H_q), psi)
-            # print(f"Blissed ghost expectation: {blissed_expectation}")
-            #
-            # blissed_ghost_vars = commutator_variance(new_H_q, bliss_ghost_decomp, N, Ne)
-            # print(f"Blissed Ghost variance: {blissed_ghost_vars}")
-
-            # Shared Pauli
 
             start = time.time()
 
@@ -397,7 +290,8 @@ if __name__ == '__main__':
             fragment_idx_to_sharable_paulis, pw_grp_idxes_no_fix, pw_grp_idxes_fix = get_share_pauli_only_decomp(
                 sharable_paulis_dict)
 
-            pw_grp_idxes_no_fix_len = get_pw_grp_idxes_no_fix_len(pw_grp_idxes_no_fix)
+            pw_grp_idxes_no_fix_len = get_pw_grp_idxes_no_fix_len(
+                pw_grp_idxes_no_fix)
 
             # 3
             all_sharable_contained_decomp, all_sharable_no_fixed_decomp = get_overlapping_decomp(
@@ -405,19 +299,23 @@ if __name__ == '__main__':
 
             # 4
             sharable_only_decomp, sharable_only_no_fixed_decomp = get_sharable_only_decomp(
-                sharable_paulis_dict, blissed_decomp, pw_grp_idxes_fix, coeff_map)
+                sharable_paulis_dict, blissed_decomp, pw_grp_idxes_fix,
+                coeff_map)
 
             # 5
             fixed_grp, all_sharable_contained_no_fixed_decomp, new_sharable_pauli_indices_list, new_grp_len_list, new_grp_idx_start \
-                = get_coefficient_orderings(sharable_only_decomp, sharable_paulis_list,
-                                            sharable_pauli_indices_list, coeff_map)
+                = get_coefficient_orderings(sharable_only_decomp,
+                                            sharable_paulis_list,
+                                            sharable_pauli_indices_list,
+                                            coeff_map)
 
             # 6
             pw_indices = get_all_pw_indices(sharable_paulis_list,
                                             sharable_only_no_fixed_decomp,
-                                            pw_grp_idxes_no_fix, new_grp_idx_start)
+                                            pw_grp_idxes_no_fix,
+                                            new_grp_idx_start)
 
-            meas_alloc = get_meas_alloc(blissed_decomp, N, psi)
+            meas_alloc = get_meas_alloc(blissed_decomp, N, cisd_state)
 
             # Get the linear equation for finding the gradient descent direction
             matrix, b = optimize_coeffs_parallel(
@@ -426,7 +324,7 @@ if __name__ == '__main__':
                 meas_alloc,
                 sharable_only_decomp,
                 sharable_only_no_fixed_decomp,
-                pw_indices, psi, N, blissed_decomp, alpha=0.001)
+                pw_indices, cisd_state, N, blissed_decomp, alpha=0.001)
             print("M, b obtained")
             sol = np.linalg.lstsq(matrix, b.T, rcond=None)
             x0 = sol[0]
@@ -447,13 +345,13 @@ if __name__ == '__main__':
                     new_grp_idx_start,
                     H_decompose_copy,
                     N,
-                    ground_state,
+                    cisd_state,
                     Ne
                 ))
 
             expectation_v = 0
             for fragment in measured_groups:
-                expectation_v += expectation(gso(fragment, N), ground_state)
+                expectation_v += expectation(gso(fragment, N), cisd_state)
             print(f"Expectation value after Shared Pauli: {expectation_v}")
             # assert np.isclose(expectation_v.real, original_exp.real,
             #                   atol=1E-3), "Expectation value shouldn't change"
@@ -471,7 +369,8 @@ if __name__ == '__main__':
                 # Write the header only if the file doesn't exist
                 if not file_exists:
                     writer.writerow(
-                        ['As', 'Original Variance', 'BLISS variance', 'Shared Pauli'])
+                        ['As', 'Original Variance', 'BLISS variance',
+                         'Shared Pauli'])
 
                 # Write the data
                 writer.writerow(

@@ -16,6 +16,29 @@ def cov_frag_pauli(frag: QubitOperator, pauli_w: QubitOperator, psi):
     return expectation(frag * pauli_w, psi) - expectation(frag, psi) * expectation(pauli_w, psi)
 
 
+def cov_frag_pauli_iterative(frag: QubitOperator, pauli_w: QubitOperator, psi, n_qubits, alpha):
+    """
+    Compute the covariance of the fragment and the Pauli word.
+    :param frag:
+    :param pauli_w:
+    :param psi:
+    :return:
+    """
+    pauli_w_term = list(pauli_w.terms.keys())[0]
+    sum_of_cov = 0.0
+    for term, coeff in frag.terms.items():
+        pauli_v = coeff * QubitOperator(term=term)
+        sum_of_cov += (1. - alpha) * cov_pauli_pauli(gso(pauli_v, n_qubits), gso(pauli_w, n_qubits), psi)
+        if term == pauli_w_term:
+            sum_of_cov += alpha * coeff * var_avg(
+                n_qubits)
+    return sum_of_cov
+
+
+def var_avg(n_qubits):
+    return 1. - 1. / ( 2 ** n_qubits  + 1 )
+
+
 def cov_frag_sum_pauli(term_list: list, pauli_w: QubitOperator, psi, n_qubits):
     """
     Compute the covariance of the fragment and the Pauli word.
@@ -74,7 +97,7 @@ def variance_of_group(fragment: QubitOperator, wfs, n_qubits):
    return variance(gso(fragment, n_qubits), wfs)
 
 
-def commutator_variance(H: FermionOperator, decomp, N, Ne):
+def commutator_variance(H: FermionOperator, decomp, N, psi):
     """
     Computes the variance of the [H, G] - K.
     :param H: The Hamiltonian to compute the variance of.
@@ -84,7 +107,6 @@ def commutator_variance(H: FermionOperator, decomp, N, Ne):
     :param N: The number of sites
     :return: The variance metric
     """
-    psi = ggs(gso(H, N))[1]
 
     vars = np.zeros(len(decomp), dtype=np.complex128)
     for i, frag in enumerate(decomp):

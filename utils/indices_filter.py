@@ -2,6 +2,7 @@ import numpy as np
 import sympy as sp
 from openfermion import FermionOperator
 from utils.custom_majorana_transform import get_custom_majorana_operator
+from SolvableQubitHamiltonians.one_norm_func_gen import upper_triangle_array, symmetric_matrix_from_upper_triangle, matrix_to_fermion_operator
 import re
 import pickle
 
@@ -113,8 +114,6 @@ def filter_indices(H, N, Ne):
     # Tensor representation of the coefficient candidates
     tensor_repr = symmetric_tensor(killer_coeff_candidate, N)
 
-    print(f"Tensor representation obtained: {tensor_repr}")
-
     total_number_operator = FermionOperator()
     for mode in range(N):
         total_number_operator += FermionOperator(((mode, 1), (mode, 0)))
@@ -138,8 +137,15 @@ def filter_indices(H, N, Ne):
     candidate_coeff = set()
     remove_list = set()
 
+    all_terms_counter = 0
+    candidates_counter = 0
+    invariant_1norm = 0
+
+
+
     print("Filter starts")
     for term, coeff in H_in_majo.terms.items():
+        all_terms_counter += 1
         if term in killer_keys:
             expre = killer_in_majo.terms[term]
             matches = re.findall(r'T_(\d{4})', str(expre))
@@ -147,13 +153,96 @@ def filter_indices(H, N, Ne):
                       matches}  # Use set comprehension
 
             if coeff != 0:
+                candidates_counter += 1
                 candidate_coeff.update(result)
             else:
                 remove_list.update(result)
+        else:
+            invariant_1norm += abs(coeff)
 
+    print(f"Total Majo terms: {all_terms_counter}")
+    print(f"optimized Majo terms: {candidates_counter}")
+    print(f"Invariant 1-Norm: {invariant_1norm}")
     print("Filter ends")
+
     # Use set difference for efficiency
     result = list(candidate_coeff - remove_list)
+
+    print(f"Number of parameters to be optimized: {len(result)}")
+
+    return result
+
+
+def filter_indices_normal_bliss(H, N, Ne):
+    """
+    Return the indices of which we apply the killers to
+    But we want to
+    :param H:
+    :param N:
+    :param Ne:
+    :return:
+    """
+    # The killer coefficient candidates. We are going to remove unncessary ones from this
+    killer_coeff_O = upper_triangle_array('O', N)
+
+    # Tensor representation of the coefficient candidates
+    O_matrix = symmetric_matrix_from_upper_triangle(killer_coeff_O, N)
+
+    total_number_operator = FermionOperator()
+    for mode in range(N):
+        total_number_operator += FermionOperator(((mode, 1), (mode, 0)))
+
+    # Get the fermion operator representation
+    tensor_ferm_op = matrix_to_fermion_operator(O_matrix, N)
+
+    print("Tensor Ferm Op obtained")
+
+    killer = tensor_ferm_op * (total_number_operator - Ne)
+
+    print("Fermion Representation Killer obtained")
+
+    killer_in_majo = get_custom_majorana_operator(killer)
+    killer_keys = killer_in_majo.terms.keys()
+
+    H_in_majo = get_custom_majorana_operator(H)
+
+    print("Majorana H obtained")
+
+    candidate_coeff = set()
+    remove_list = set()
+
+    all_terms_counter = 0
+    candidates_counter = 0
+    invariant_1norm = 0
+
+
+
+    print("Filter starts")
+    for term, coeff in H_in_majo.terms.items():
+        all_terms_counter += 1
+        if term in killer_keys:
+            expre = killer_in_majo.terms[term]
+            matches = re.findall(r'O_(\d{2})', str(expre))
+            result = {tuple(map(int, match)) for match in
+                      matches}  # Use set comprehension
+
+            if coeff != 0:
+                candidates_counter += 1
+                candidate_coeff.update(result)
+            # else:
+            #     remove_list.update(result)
+        else:
+            invariant_1norm += abs(coeff)
+
+    print(f"Total Majo terms: {all_terms_counter}")
+    print(f"optimized Majo terms: {candidates_counter}")
+    print(f"Invariant 1-Norm: {invariant_1norm}")
+    print("Filter ends")
+
+    # Use set difference for efficiency
+    result = list(candidate_coeff - remove_list)
+
+    print(f"Number of parameters to be optimized: {len(result)}")
 
     return result
 

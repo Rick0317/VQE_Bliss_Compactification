@@ -1,4 +1,4 @@
-from utils.measurement_utils.math_utils import cov_pauli_pauli, cov_frag_pauli, variance_of_group, commutator_variance, cov_frag_sum_pauli
+from utils.measurement_utils.math_utils import cov_pauli_pauli, cov_frag_pauli_iterative, cov_frag_pauli, variance_of_group, commutator_variance, cov_frag_sum_pauli
 import numpy as np
 from openfermion import (
     get_sparse_operator as gso,
@@ -25,6 +25,8 @@ from utils.measurement_utils.shared_paulis import (
     qubit_op_to_list
 )
 from copy import deepcopy
+from multiprocessing import Pool
+
 
 def variance_metric(H, decomp, N):
     psi = ggs(gso(H, N))[1]
@@ -54,7 +56,7 @@ def load_hamiltonian(moltag):
     with open(filename, 'rb') as f:
         Hfer = pickle.load(f)
 
-    G = FermionOperator('5^ 4^ 2 1') - FermionOperator('1^ 2^ 4 5')
+    G = FermionOperator('3^ 2^ 0 1') - FermionOperator('1^ 0^ 2 3')
     hamil_copy1 = copy_ferm_hamiltonian(Hfer)
     hamil_copy2 = copy_ferm_hamiltonian(Hfer)
     g_copy1 = copy_ferm_hamiltonian(G)
@@ -93,11 +95,14 @@ def optimize_coeffs(pw_grp_idxes_fix, pw_grp_idxes_no_fix_len, meas_alloc, shara
     # @ Verified
     matrix_row_column_size = np.sum(pw_grp_idxes_no_fix_len)
     print(f"Matrix Size: {matrix_row_column_size}")
+    total_fragments = len(shara_pauli_only_no_fixed_decomp)
+    print(f"Number of fragments: {len(shara_pauli_only_no_fixed_decomp)}")
     matrix = np.zeros((matrix_row_column_size, matrix_row_column_size))
     b = np.zeros((1, matrix_row_column_size))
 
     row_idx = 0
     for frag_idx, fragment in enumerate(shara_pauli_only_no_fixed_decomp):
+        print(f"Fragment Index: {frag_idx} / {total_fragments}")
         meas_a = meas_alloc[frag_idx]
 
         # For each sharable Pauli in the fragment, except for the fixed fragment
@@ -110,7 +115,7 @@ def optimize_coeffs(pw_grp_idxes_fix, pw_grp_idxes_no_fix_len, meas_alloc, shara
 
                 # Coefficients of the Pauli word t in the fragment.
                 pauli_word_t = QubitOperator(term=pwt)
-                coeff_t = shara_pauli_only_decomp[frag_idx].terms[pwt]
+                # coeff_t = shara_pauli_only_decomp[frag_idx].terms[pwt]
 
                 # Covariance of P_s and P_t.
                 cov_st_paulis = (1 - alpha) * cov_pauli_pauli(gso(pauli_word_s, n_qubits=n_qubits), gso(pauli_word_t, n_qubits=n_qubits), psi)
@@ -131,6 +136,8 @@ def optimize_coeffs(pw_grp_idxes_fix, pw_grp_idxes_no_fix_len, meas_alloc, shara
                     for idxs in pw_idx_dict.values():
                         matrix[row_idx, idxs] += cov_st_paulis.real/meas_a
 
+                del pauli_word_t, cov_st_paulis, pw_idx_dict
+
             cov_paulis_H = cov_frag_pauli(gso(original_decomp[frag_idx], n_qubits=n_qubits), gso(pauli_word_s, n_qubits=n_qubits), psi)
             b[0, row_idx] += (1. - alpha) * cov_paulis_H.real / meas_a
 
@@ -140,7 +147,7 @@ def optimize_coeffs(pw_grp_idxes_fix, pw_grp_idxes_no_fix_len, meas_alloc, shara
 
             for kpw_idx, kpw in enumerate(shara_pauli_only_decomp[fixed_group_index].terms):
                 pauli_word_k = QubitOperator(term=kpw)
-                coeff_k = shara_pauli_only_decomp[fixed_group_index].terms[kpw]
+                # coeff_k = shara_pauli_only_decomp[fixed_group_index].terms[kpw]
 
                 cov_ks_paulis = (1 - alpha) * cov_pauli_pauli(gso(pauli_word_s, n_qubits=n_qubits), gso(pauli_word_k, n_qubits=n_qubits), psi)
 
@@ -161,11 +168,150 @@ def optimize_coeffs(pw_grp_idxes_fix, pw_grp_idxes_no_fix_len, meas_alloc, shara
                         matrix[row_idx, idxs] -= cov_ks_paulis.real / meas_alloc[
                             fixed_group_index]
 
+                del pauli_word_k, cov_ks_paulis, pw_idx_dict
+
             cov_paulik_H = cov_frag_pauli(gso(original_decomp[fixed_group_index], n_qubits=n_qubits), gso(pauli_word_s, n_qubits=n_qubits), psi)
 
             b[0, row_idx] -= (1. - alpha) * cov_paulik_H.real / meas_alloc[fixed_group_index]
 
             row_idx += 1
+
+
+    return matrix, b
+
+def process_fragment(args):
+    """Computes a portion of the matrix and b for a given fragment index."""
+    frag_idx, fragment, shara_pauli_only_decomp, original_decomp, \
+        pw_indices_dict, meas_alloc, alpha, psi, n_qubits, var_avg, \
+        gso, cov_pauli_pauli, cov_frag_pauli_iterative, get_pauli_word_tuple, \
+        pw_grp_idxes_fix, shara_pauli_only_no_fixed_decomp, row_idx_start = args
+
+    row_results = []
+    b_results = []
+
+    row_idx = row_idx_start
+    meas_a = meas_alloc[frag_idx]
+
+    print(f"Processing Fragment: {frag_idx}")
+
+    for spw_idx, pws in enumerate(fragment.terms):
+        pauli_word_s = QubitOperator(term=pws)
+
+        row_data = {}
+
+        for tpw_idx, pwt in enumerate(shara_pauli_only_decomp[frag_idx].terms):
+            pauli_word_t = QubitOperator(term=pwt)
+            cov_st_paulis = (1 - alpha) * cov_pauli_pauli(
+                gso(pauli_word_s, n_qubits=n_qubits),
+                gso(pauli_word_t, n_qubits=n_qubits),
+                psi
+            )
+            if pwt == pws:
+                cov_st_paulis += alpha * var_avg(n_qubits)
+
+            pw_idx_dict = pw_indices_dict[get_pauli_word_tuple(pauli_word_t)]
+
+            if pwt in fragment.terms:
+                row_data[pw_idx_dict[frag_idx]] = -cov_st_paulis.real / meas_a
+            else:
+                for idxs in pw_idx_dict.values():
+                    if idxs not in row_data:
+                        row_data[idxs] = cov_st_paulis.real / meas_a
+                    else:
+                        row_data[idxs] += cov_st_paulis.real / meas_a
+
+        cov_paulis_H = cov_frag_pauli_iterative(original_decomp[frag_idx], pauli_word_s, psi, n_qubits, alpha)
+        # cov_frag_pauli(
+        #     gso(original_decomp[frag_idx], n_qubits=n_qubits),
+        #     gso(pauli_word_s, n_qubits=n_qubits),
+        #     psi
+        # )
+        b_value = cov_paulis_H.real / meas_a
+
+        fixed_group_index = pw_grp_idxes_fix[pws]
+
+        for kpw_idx, kpw in enumerate(
+                shara_pauli_only_decomp[fixed_group_index].terms):
+            pauli_word_k = QubitOperator(term=kpw)
+            cov_ks_paulis = (1 - alpha) * cov_pauli_pauli(
+                gso(pauli_word_s, n_qubits=n_qubits),
+                gso(pauli_word_k, n_qubits=n_qubits),
+                psi
+            )
+            if pws == kpw:
+                cov_ks_paulis += alpha * var_avg(n_qubits)
+
+            pw_idx_dict = pw_indices_dict[get_pauli_word_tuple(pauli_word_k)]
+
+            if kpw in shara_pauli_only_no_fixed_decomp[fixed_group_index].terms:
+                if pw_idx_dict[fixed_group_index] not in row_data:
+                    row_data[pw_idx_dict[fixed_group_index]] = cov_ks_paulis.real / \
+                                                               meas_alloc[
+                                                                   fixed_group_index]
+                else:
+                    row_data[
+                        pw_idx_dict[fixed_group_index]] += cov_ks_paulis.real / \
+                                                          meas_alloc[
+                                                              fixed_group_index]
+            else:
+                for idxs in pw_idx_dict.values():
+                    if idxs not in row_data:
+                        row_data[idxs] = -cov_ks_paulis.real / meas_alloc[
+                            fixed_group_index]
+                    else:
+                        row_data[idxs] -= cov_ks_paulis.real / meas_alloc[
+                            fixed_group_index]
+
+        cov_paulik_H = cov_frag_pauli_iterative(original_decomp[fixed_group_index], pauli_word_s, psi, n_qubits, alpha)
+        b_value -= cov_paulik_H.real / meas_alloc[
+            fixed_group_index]
+
+        row_results.append((row_idx, row_data))
+        b_results.append((row_idx, b_value))
+
+        row_idx += 1  # Increment row index correctly
+
+    return row_results, b_results
+
+def optimize_coeffs_parallel(pw_grp_idxes_fix, pw_grp_idxes_no_fix_len, meas_alloc, shara_pauli_only_decomp, shara_pauli_only_no_fixed_decomp, pw_indices_dict, psi, n_qubits, original_decomp, alpha):
+
+    matrix_row_column_size = np.sum(pw_grp_idxes_no_fix_len)
+    print(f"Matrix Size: {matrix_row_column_size}")
+    total_fragments = len(shara_pauli_only_no_fixed_decomp)
+    print(f"Number of fragments: {total_fragments}")
+
+    matrix = np.zeros((matrix_row_column_size, matrix_row_column_size))
+    b = np.zeros((1, matrix_row_column_size))
+
+    # Precompute starting row indices for each fragment
+    row_idx_starts = {}
+    row_idx = 0
+    for frag_idx, fragment in enumerate(shara_pauli_only_no_fixed_decomp):
+        row_idx_starts[frag_idx] = row_idx
+        row_idx += len(
+            fragment.terms)  # Increment by number of terms in fragment
+
+    pool = Pool()  # Adjust processes if needed
+    tasks = [
+        (frag_idx, fragment, shara_pauli_only_decomp, original_decomp,
+         pw_indices_dict, meas_alloc, alpha, psi, n_qubits, var_avg,
+         gso, cov_pauli_pauli, cov_frag_pauli_iterative, get_pauli_word_tuple,
+         pw_grp_idxes_fix, shara_pauli_only_no_fixed_decomp,
+         row_idx_starts[frag_idx])
+        for frag_idx, fragment in enumerate(shara_pauli_only_no_fixed_decomp)
+    ]
+
+    results = pool.map(process_fragment, tasks)
+    pool.close()
+    pool.join()
+
+    # Merge results
+    for row_results, b_results in results:
+        for row_idx, row_data in row_results:
+            for col_idx, value in row_data.items():
+                matrix[row_idx, col_idx] += value
+        for row_idx, b_value in b_results:
+            b[0, row_idx] += b_value
 
     return matrix, b
 
@@ -193,7 +339,7 @@ def remove_term(qubit_op: QubitOperator, removed_term):
 
     return new_qubit_op
 
-def get_split_measurement_variance_unconstrained(coeff, no_group, sharable_paulis_list, sharable_paulis_fixed_list, sharable_no_fixed_decomp, pw_grp_idxes_no_fix, new_grp_idx_start, H_q, n_qubits, wfs):
+def get_split_measurement_variance_unconstrained(coeff, no_group, sharable_paulis_list, sharable_paulis_fixed_list, sharable_no_fixed_decomp, pw_grp_idxes_no_fix, new_grp_idx_start, H_q, n_qubits, wfs, Ne):
     """
     Finds the estimator variance for a given coefficient split.
     Args:
@@ -238,9 +384,11 @@ def get_split_measurement_variance_unconstrained(coeff, no_group, sharable_pauli
         for grp_idx in pw_grp_idxes_no_fix[pw]:
             added = False
 
+            copy_measured_groups = deepcopy(measured_groups)
+
             # Search through all the Pauli words in the fragment
             # Look for whether the Pauli word already exists or not.
-            for igp, group_word in enumerate(measured_groups[grp_idx].terms):
+            for igp, group_word in enumerate(copy_measured_groups[grp_idx].terms):
                 if (group_word == pw):
                     # measured_groups[grp_idx] += (coeff[new_grp_idx_start[grp_idx] + qubit_op_to_list(sharable_no_fixed_decomp[grp_idx]).index(pw)] + original_coeff_map[group_word]) * QubitOperator(pw)
 
@@ -257,7 +405,8 @@ def get_split_measurement_variance_unconstrained(coeff, no_group, sharable_pauli
         if not (sharable_paulis_fixed_list[pw_idx] == None):
            fixed_idx = sharable_paulis_fixed_list[pw_idx]
            added = False
-           for igp, group_word in enumerate(measured_groups[fixed_idx].terms):
+           copy_measured_groups = deepcopy(measured_groups)
+           for igp, group_word in enumerate(copy_measured_groups[fixed_idx].terms):
                if (group_word == pw):
                   measured_groups[fixed_idx] += (fixed_grp_coefficients[pw_idx]) * QubitOperator(pw)
                   added = True
@@ -265,7 +414,7 @@ def get_split_measurement_variance_unconstrained(coeff, no_group, sharable_pauli
 
 
     # 3. Get the variances.
-    var_new = commutator_variance(H_q, measured_groups, N, Ne)
+    var_new = commutator_variance(H_q, measured_groups, n_qubits, wfs)
     print(f"Updated variance: {var_new}")
     var, variance = get_measurement_variance_simple(measured_groups, wfs, n_qubits)
 
@@ -316,7 +465,7 @@ def get_measurement_variance_simple(groupings, wfs, n_qubits):
     variance = np.sum(sqrt_var)**2
     return var, variance
 
-def get_meas_alloc(original_decomp):
+def get_meas_alloc(original_decomp, N, psi):
     n_frag = len(original_decomp)
     vars = np.zeros(n_frag, dtype=np.complex128)
     sqrt_vars = np.zeros(n_frag, dtype=np.complex128)
@@ -454,10 +603,10 @@ if __name__ == '__main__':
     # 6
     pw_indices = get_all_pw_indices(sharable_paulis_list, sharable_only_no_fixed_decomp, pw_grp_idxes_no_fix, new_grp_idx_start)
 
-    meas_alloc = get_meas_alloc(decomp)
+    meas_alloc = get_meas_alloc(decomp, N, psi)
 
     # Get the linear equation for finding the gradient descent direction
-    matrix, b = optimize_coeffs(
+    matrix, b = optimize_coeffs_parallel(
         pw_grp_idxes_fix,
         pw_grp_idxes_no_fix_len,
         meas_alloc,
@@ -468,6 +617,8 @@ if __name__ == '__main__':
     sol = np.linalg.lstsq(matrix, b.T, rcond=None)
     x0 = sol[0]
     coeff = x0.T[0]
+
+    print(f"Coefficient obtained")
 
     # Update the fragment by modifying the coefficients of shared Pauli operators.
     variance, meas_alloc, var, fixed_grp_coefficients, measured_groups = (
@@ -481,7 +632,8 @@ if __name__ == '__main__':
     new_grp_idx_start,
     H_q,
     N,
-    psi
+    psi,
+        Ne
     ))
 
     expectation_v = 0

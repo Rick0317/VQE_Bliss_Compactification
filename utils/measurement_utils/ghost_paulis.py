@@ -142,10 +142,9 @@ def check_commutativity(frag: QubitOperator, pauli: QubitOperator):
     :param pauli:
     :return:
     """
-    commutator = frag * pauli - pauli * frag
-    if not commutator.terms:
-        return True
-    return False
+    first_word = PauliString(frag.terms.keys()[0])
+    second_word = PauliString(pauli.terms.keys()[0])
+    return first_word.qubit_wise_commute(second_word)
 
 
 def get_variance_reduction(c, d_of_pauli, var_of_pauli):
