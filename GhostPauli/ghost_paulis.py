@@ -9,10 +9,8 @@ from openfermion import (
 import numpy as np
 from paulis import PauliString, pauli_ops_to_qop
 from SymplecticVectorSpace.space_F_definition import SpaceFVector, vector_2_pauli
-from scipy.linalg import svd, null_space
 from itertools import product
-from SolvableQubitHamiltonians.qwc_decomposition import qwc_decomposition, ferm_to_qubit
-from SolvableQubitHamiltonians.main_utils_partitioning import sorted_insertion_decomposition
+from Decompositions.qwc_decomposition import qwc_decomposition
 
 
 def is_z_string(pauli_product):
@@ -318,7 +316,7 @@ def copy_hamiltonian(H):
 
 
 def load_hamiltonian(moltag):
-    filename = f'../../SolvableQubitHamiltonians/ham_lib/h4_sto-3g.pkl'
+    filename = f'../SolvableQubitHamiltonians/ham_lib/h4_sto-3g.pkl'
     with open(filename, 'rb') as f:
         Hfer = pickle.load(f)
     Hqub = bravyi_kitaev(Hfer)

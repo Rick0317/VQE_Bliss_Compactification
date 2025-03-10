@@ -1,23 +1,8 @@
 import pickle
-from utils.bliss_package import (
-    optimize_bliss_mu123_o12,
-    optimization_bliss_mu12_o1,
-    construct_H_bliss_m12_o1,
-    construct_H_bliss_mu123_o12)
-from scipy.optimize import minimize
-from SolvableQubitHamiltonians.utils_basic import copy_ferm_hamiltonian
 from pathlib import Path
-from openfermion import get_majorana_operator, FermionOperator, normal_ordered
-import numpy as np
 import h5py
 from utils.ferm_utils import *
-from SolvableQubitHamiltonians.variance import (
-    commutator_variance,
-    qwc_decomposition,
-    ferm_to_qubit,
-    commutator_variance_subspace)
 
-from SolvableQubitHamiltonians.main_utils_partitioning import sorted_insertion_decomposition
 
 def transform_to_chemist_notation(operator):
     """Transform a FermionOperator into chemist notation."""
@@ -81,7 +66,7 @@ def save_tensors_to_h5(h1e, h2e, h3e, q4e, filename="tensors.h5"):
 
 
 if __name__ == "__main__":
-    filename = Path('../utils/ham_lib/truncated_hamiltonian.pkl')
+    filename = Path('../ham_lib/truncated_hamiltonian.pkl')
     with open(filename, 'rb') as f:
         H = pickle.load(f)
 

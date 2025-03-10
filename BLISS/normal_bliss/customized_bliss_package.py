@@ -1,6 +1,6 @@
 from openfermion import FermionOperator
 import numpy as np
-from SolvableQubitHamiltonians.customized_one_norm_func import (
+from BLISS.normal_bliss.customized_one_norm_func import (
     generate_analytical_one_norm_3_body_specific,
     construct_symmetric_tensor_specific)
 

@@ -11,11 +11,9 @@ from openfermion import (
     QubitOperator
 )
 from copy import deepcopy
-from utils.measurement_utils.frag_utils import does_term_frag_commute
-from SolvableQubitHamiltonians.qwc_decomposition import qwc_decomposition, ferm_to_qubit
-from paulis import PauliString, pauli_ops_to_qop
-from SymplecticVectorSpace.space_F_definition import SpaceFVector, vector_2_pauli
-from itertools import product
+from utils.frag_utils import does_term_frag_commute
+from Decompositions.qwc_decomposition import qwc_decomposition
+from paulis import PauliString
 
 
 def update_decomp_w_shared_paulis(psi, N, original_decomp):

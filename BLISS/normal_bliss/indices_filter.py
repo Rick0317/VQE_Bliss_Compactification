@@ -1,8 +1,8 @@
 import numpy as np
 import sympy as sp
 from openfermion import FermionOperator
-from utils.custom_majorana_transform import get_custom_majorana_operator
-from SolvableQubitHamiltonians.one_norm_func_gen import upper_triangle_array, symmetric_matrix_from_upper_triangle, matrix_to_fermion_operator
+from BLISS.Majorana.custom_majorana_transform import get_custom_majorana_operator
+from BLISS.normal_bliss.one_norm_func_gen import upper_triangle_array, symmetric_matrix_from_upper_triangle, matrix_to_fermion_operator
 import re
 import pickle
 
@@ -251,7 +251,7 @@ if __name__ == '__main__':
     N = 8
     Ne = 4
 
-    filename = f'ham_lib/h4_sto-3g.pkl'
+    filename = f'../../utils/ham_lib/h4_sto-3g.pkl'
     with open(filename, 'rb') as f:
         Hamil = pickle.load(f)
 

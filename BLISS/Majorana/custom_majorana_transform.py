@@ -1,6 +1,6 @@
 from openfermion import PolynomialTensor, DiagonalCoulombHamiltonian, FermionOperator, QuadOperator, BosonOperator
 from typing import Union
-from utils.custom_Majorana_operator import CustomMajoranaOperator
+from BLISS.Majorana.custom_Majorana_operator import CustomMajoranaOperator
 import numpy
 import itertools
 from openfermion.utils.operator_utils import count_qubits

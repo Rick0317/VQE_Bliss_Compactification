@@ -1,29 +1,17 @@
 from openfermion import (
-    QubitOperator as Q,
-    commutator,
-    anticommutator,
     get_sparse_operator as gso,
     get_ground_state as ggs,
     variance,
     bravyi_kitaev,
-    FermionOperator,
-    get_majorana_operator,
-    jw_get_ground_state_at_particle_number as jwggs,
     normal_ordered
 )
-import os
-import csv
 
-from SolvableQubitHamiltonians.main_utils_partitioning import N_QUBITS, copy_hamiltonian, sorted_insertion_decomposition
+from SolvableQubitHamiltonians.main_utils_partitioning import copy_hamiltonian
 from SolvableQubitHamiltonians.utils_basic import copy_ferm_hamiltonian
 import pickle
-from SolvableQubitHamiltonians.qwc_decomposition import qwc_decomposition
-from scipy.optimize import minimize
-from utils.bliss_package import *
-from utils.customized_bliss_package import *
-from utils.indices_filter import filter_indices
-from utils.measurement_utils.ghost_paulis import update_decomp_w_ghost_paulis
-from utils.bliss_efficiency import bliss_reducible, get_total_combs
+from Decompositions.qwc_decomposition import qwc_decomposition
+from BLISS.normal_bliss.customized_bliss_package import *
+
 
 def abs_of_dict_value(x):
     return np.abs(x[1])
@@ -85,7 +73,7 @@ if __name__ == '__main__':
     N = 8
     Ne = 4
 
-    filename = f'../../SolvableQubitHamiltonians/ham_lib/h4_sto-3g.pkl'
+    filename = f'../SolvableQubitHamiltonians/ham_lib/h4_sto-3g.pkl'
     with open(filename, 'rb') as f:
         Hamil = pickle.load(f)
 

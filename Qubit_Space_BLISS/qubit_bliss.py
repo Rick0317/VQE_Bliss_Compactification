@@ -1,10 +1,8 @@
 """ We apply the principle of BLISS to Qubit Hamiltonian """
-import numpy as np
-from cirq import q
 from openfermion import FermionOperator, QubitOperator, jordan_wigner
 import pickle
 from SolvableQubitHamiltonians.main_utils_partitioning import copy_hamiltonian
-from SolvableQubitHamiltonians.qwc_decomposition import qwc_decomposition
+from Decompositions.qwc_decomposition import qwc_decomposition
 
 
 def qubit_bliss(hamiltonian: QubitOperator):

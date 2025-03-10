@@ -3,7 +3,7 @@ FermionOperator
 )
 import numpy as np
 import sympy as sp
-from utils.custom_majorana_transform import get_custom_majorana_operator
+from BLISS.Majorana.custom_majorana_transform import get_custom_majorana_operator
 from typing import List
 
 def params_to_tensor_op(params, n):

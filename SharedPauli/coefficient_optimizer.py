@@ -1,4 +1,4 @@
-from utils.measurement_utils.math_utils import cov_pauli_pauli, cov_frag_pauli_iterative, cov_frag_pauli, variance_of_group, commutator_variance, cov_frag_sum_pauli
+from utils.math_utils import cov_pauli_pauli, cov_frag_pauli_iterative, cov_frag_pauli, variance_of_group, commutator_variance
 import numpy as np
 from openfermion import (
     get_sparse_operator as gso,
@@ -12,8 +12,8 @@ from openfermion import (
 )
 
 from SolvableQubitHamiltonians.utils_basic import copy_ferm_hamiltonian
-from SolvableQubitHamiltonians.qwc_decomposition import qwc_decomposition
-from utils.measurement_utils.shared_paulis import (
+from Decompositions.qwc_decomposition import qwc_decomposition
+from SharedPauli.shared_paulis import (
     get_sharable_paulis,
     get_share_pauli_only_decomp,
     get_pw_grp_idxes_no_fix_len,

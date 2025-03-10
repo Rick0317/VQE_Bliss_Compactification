@@ -1,14 +1,10 @@
-import random
-
 from openfermion import FermionOperator, jw_get_ground_state_at_particle_number, get_sparse_operator, get_ground_state
-from SolvableQubitHamiltonians.one_norm_func_gen import (
-    generate_analytical_one_norm,
+from BLISS.normal_bliss.one_norm_func_gen import (
     generate_analytical_one_norm_2_body,
     generate_analytical_one_norm_3_body_cheap,
     construct_symmetric_matrix,
     construct_symmetric_tensor,
     generate_analytical_one_norm_3_body,
-    construct_majorana_terms_3_body_cheap,
     generate_analytical_one_norm_3_body_simple)
 import numpy as np
 
