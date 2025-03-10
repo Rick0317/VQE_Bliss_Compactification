@@ -13,7 +13,7 @@ from openfermion import (
 from copy import deepcopy
 from utils.frag_utils import does_term_frag_commute
 from Decompositions.qwc_decomposition import qwc_decomposition
-from paulis import PauliString
+from utils.paulis import PauliString
 
 
 def update_decomp_w_shared_paulis(psi, N, original_decomp):

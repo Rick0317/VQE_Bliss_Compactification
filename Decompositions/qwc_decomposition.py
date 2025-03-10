@@ -1,5 +1,5 @@
 import numpy as np
-from paulis import PauliString
+from utils.paulis import PauliString
 from openfermion import QubitOperator, FermionOperator, bravyi_kitaev
 
 
