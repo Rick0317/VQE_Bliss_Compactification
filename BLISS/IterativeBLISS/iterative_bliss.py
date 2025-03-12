@@ -5,9 +5,16 @@ import numpy as np
 import sympy as sp
 from BLISS.Majorana.custom_majorana_transform import get_custom_majorana_operator
 from typing import List
+import random
+
 
 def params_to_tensor_op(params, n):
+    """
 
+    :param params:
+    :param n:
+    :return:
+    """
     tensor = np.zeros((n, n, n, n))
     idx = 0
     for i in range(n):
@@ -15,9 +22,7 @@ def params_to_tensor_op(params, n):
             for k in range(n):
                 for l in range(k, n):
                     tensor[i, j, k, l] = params[idx]
-                    tensor[j, i, k, l] = params[idx]
-                    tensor[i, j, l, k] = params[idx]
-                    tensor[j, i, l, k] = params[idx]
+                    tensor[l, k, j, i] = params[idx]
                     idx += 1
 
     ferm_op = FermionOperator()
@@ -51,46 +56,55 @@ def construct_HF_BLISS(H, params, N, Ne):
 
     return result
 
-def optimize_HF_BLISS(H, N, Ne, idx_list):
+
+def optimize_HF_BLISS(H, N, Ne, idx_lists):
     """
     Get the analytical form of the 1-Norm with respect to the coefficients
     of the killer terms.
     :param H: Hamiltonian
     :param N: Number of orbitals
     :param Ne: Number of electrons
-    :param idx_list:
+    :param idx_lists: The list of list of indices that will contribute to
+    the killer for each index.
     :return:
     """
-    one_norm_func, one_norm_expr = generate_analytical_one_norm_3_body_specific(H, N, Ne, idx_list)
-    idx_len = len(idx_list)
+    one_norm_func, one_norm_expr = generate_analytical_one_norm_HF(H, N, Ne, idx_lists)
     def optimization_wrapper(params):
-        t_val = params[1:1 + idx_len]
+        t_vals = []
+        prev_index = 0
+        for i in range(N):
+            ind_length = len(idx_lists[i])
+            t_vals.extend(params[prev_index: prev_index + ind_length])
+            prev_index += ind_length
+        return one_norm_func(*t_vals)
 
-        return one_norm_func(t_val)
-
-    t_val = construct_symmetric_tensor_specific(N, idx_list)
-
-    initial_guess = np.concatenate((t_val))
-    # initial_guess = np.array([z_val])
+    t_val = construct_symmetric_tensor_specific(idx_lists)
+    initial_guess = t_val
 
     return optimization_wrapper, initial_guess
 
 
-def generate_analytical_one_norm_3_body_specific(ferm_op, N, ne, idx_list):
+def generate_analytical_one_norm_HF(ferm_op, N, ne, idx_lists):
     """Generate the analytical one-norm of a parameterized Majorana operator."""
-    T = symmetric_tensor_array_specific('T', N, idx_list)
+    T_tensor_list = []
+    lamda_variables = []
 
-    T_tensor = symmetric_tensor_from_triangle_specific(T, N, idx_list)
+    for i in range(N):
+        T = symmetric_tensor_array_specific(f'T{i}', N, idx_lists[i])
+        lamda_variables.append(T)
+        T_tensor = symmetric_tensor_from_triangle_specific(T, N, idx_lists[i])
 
-    # Construct the Majorana terms manually
-    majorana_terms = construct_majorana_terms_HF(ferm_op, N, ne, T_tensor )
+        T_tensor_list.append(T_tensor)
+
+    majorana_terms = construct_majorana_terms_HF(ferm_op, N, ne, T_tensor_list)
 
     # Compute the symbolic one-norm
     one_norm_expr = sum(
         sp.Abs(coeff) for term, coeff in majorana_terms.terms.items() if
         term != ())
 
-    one_norm_func = sp.lambdify((T), one_norm_expr,
+    flat_vars = [var for sublist in lamda_variables for var in sublist]
+    one_norm_func = sp.lambdify(flat_vars, one_norm_expr,
                                 modules=['numpy'])
 
     print("Analytical 1-Norm Complete")
@@ -107,9 +121,9 @@ def symmetric_tensor_array_specific(name, n, candidate_idx):
     """
     symmetric_tensor = []
     for i in range(n):
-        for j in range(n):
+        for j in range(i, n):
             for k in range(n):
-                for l in range(n):
+                for l in range(k, n):
                     if (i, j, k, l) in candidate_idx:
                         symmetric_tensor.append(sp.Symbol(f"{name}_{i}{j}{k}{l}"))
 
@@ -170,3 +184,19 @@ def tensor_to_ferm_op(tensor, N):
                     ferm_op += FermionOperator(f'{i}^ {j} {k}^ {l}', tensor[i, j, k, l])
 
     return ferm_op
+
+
+def construct_symmetric_tensor_specific(idx_lists):
+    total_len = 0
+    for idx_list in idx_lists:
+        total_len += len(idx_list)
+    symm_tensor = np.zeros(total_len)
+    prev_idx = 0
+    for idx_list in idx_lists:
+        prev_len = len(idx_list)
+        for i in range(prev_len):
+            t = random.random() * 0.01
+            symm_tensor[prev_idx + i] = t
+        prev_idx += prev_len
+
+    return symm_tensor

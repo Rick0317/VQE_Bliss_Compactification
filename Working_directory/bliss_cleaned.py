@@ -12,14 +12,12 @@ from Decompositions.qwc_decomposition import qwc_decomposition
 from BLISS.normal_bliss.customized_bliss_package import *
 from SolvableQubitHamiltonians.utils_basic import copy_ferm_hamiltonian
 from SolvableQubitHamiltonians.main_utils_partitioning import copy_hamiltonian
-from StatePreparation.reference_state_utils import get_cisd_gs
-from itertools import combinations
-from SharedPauli.shared_pauli_package import apply_shared_pauli
 from BLISS.BLISS import bliss_three_body_indices_filtered
 from OperatorPools.generalized_fermionic_pool import *
 import os
 import csv
 from StatePreparation.hartree_fock import get_bk_hf_state
+from Screenings.flip_based_screening import get_non_zero_anti_hermitian_two_body
 
 def abs_of_dict_value(x):
     return np.abs(x[1])
@@ -90,7 +88,7 @@ if __name__ == '__main__':
     anti_com_list = [
         get_anti_hermitian_two_body(indices) for indices in com_name_list
     ]
-
+    anti_com_list = get_non_zero_anti_hermitian_two_body(ordered_hamil, N)
     for i in range(len(anti_com_list)):
         G = anti_com_list[i]
         hamil_copy1 = copy_ferm_hamiltonian(ordered_hamil)
@@ -101,8 +99,8 @@ if __name__ == '__main__':
         commutator = hamil_copy1 * g_copy1 - g_copy2 * hamil_copy2
         H = normal_ordered(commutator)
         H_in_q = ferm_to_qubit(H)
-        # energy, cisd_state = get_cisd_gs(mol_name, H_in_q, N, 'wfs', )
-        cisd_state = get_bk_hf_state(N, Ne)
+
+        hf_state = get_bk_hf_state(N, Ne)
 
         # Define the total number operator N = sum_i a_i† a_i
         number_operator = FermionOperator()
@@ -113,17 +111,17 @@ if __name__ == '__main__':
         number_operator_qubit = bravyi_kitaev(number_operator)
 
         print(
-            f"Particle number Qubit: {expectation(gso(number_operator_qubit), cisd_state)}")
+            f"Particle number Qubit: {expectation(gso(number_operator_qubit), hf_state)}")
 
 
         print(
-            f"Sz Qubit: {expectation(gso(ferm_to_qubit(sz_operator(N)), N), cisd_state)}")
+            f"Sz Qubit: {expectation(gso(ferm_to_qubit(sz_operator(N)), N), hf_state)}")
 
 
-        original_exp = expectation(gso(H_in_q, N), cisd_state)
+        original_exp = expectation(gso(H_in_q, N), hf_state)
         print(f"Original Expectation value Qubit: {original_exp}")
 
-        if original_exp == 0 :
+        if abs(original_exp) < 1e-6:
             continue
 
         copied_H = copy_ferm_hamiltonian(H)
@@ -133,7 +131,7 @@ if __name__ == '__main__':
         # decomp = sorted_insertion_decomposition(H_copy, methodtag)
         decomp = qwc_decomposition(H_copy)
         print("Original Decomposition Complete")
-        original_var = commutator_variance(H_q, decomp, N, cisd_state).real
+        original_var = commutator_variance(H_q, decomp, N, hf_state).real
         print(f"Original variance: {original_var}")
 
         majo = get_majorana_operator(H)
@@ -148,7 +146,7 @@ if __name__ == '__main__':
         bliss_output = bliss_three_body_indices_filtered(copied_H2, N, Ne)
 
         bliss_exp = expectation(gso(ferm_to_qubit(bliss_output), N),
-                                cisd_state)
+                                hf_state)
         print(f"BLISS Expectation value Qubit : {bliss_exp}")
 
         H_before_bliss_test = copy_ferm_hamiltonian(H)
@@ -177,19 +175,11 @@ if __name__ == '__main__':
 
         blissed_vars = commutator_variance(H_decompose_copy,
                                            blissed_decomp.copy(), N,
-                                           cisd_state).real
+                                           hf_state).real
 
         print(f"Blissed variance: {blissed_vars}")
 
-        H_q = copy_hamiltonian(H_bliss_q)
-
-        var, last_var, measured_groups, expectation_v = apply_shared_pauli(H_q, blissed_decomp, N, Ne, cisd_state)
-
-        print(f"Expectation value after Shared Pauli: {expectation_v}")
-
-        print(f"Updated variance {last_var}")
-
-        file_name = f"bliss_commutator_ghost_result_{mol_name}.csv"
+        file_name = f"bliss_commutator_hf_result_{mol_name}.csv"
 
         file_exists = os.path.isfile(file_name)
         # Open the file in append mode or write mode
@@ -201,11 +191,8 @@ if __name__ == '__main__':
             if not file_exists:
                 writer.writerow(
                     ['As', 'Original Variance', 'BLISS variance',
-                     'Shared Pauli'])
+                     'Original 1-Norm', 'BLISS 1-Norm',])
 
             # Write the data
             writer.writerow(
-                [com_name_list[i], original_var, blissed_vars, last_var])
-
-
-
+                ["Some", original_var, blissed_vars, one_norm, blissed_one_norm])

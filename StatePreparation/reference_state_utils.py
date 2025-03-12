@@ -125,7 +125,7 @@ def find_index(basis_state):
 
     return index
 
-def get_reference_state(occ_no_state, tf = 'bk', gs_format = 'dm'):
+def get_reference_state(occ_no_state, gs_format = 'wfs'):
     """
     Given some occupation numebr vector, make the density matrix that corresponds to that state.
     Args:

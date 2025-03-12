@@ -146,53 +146,6 @@ def generate_analytical_one_norm_3_body_specific(ferm_op, N, ne, idx_list):
         sp.Abs(coeff) for term, coeff in majorana_terms.terms.items() if
         term != ())
 
-    # coeff_matrix = []
-    # rhs_vector = []
-    # constant_terms = []
-    # for term, coeff_expr in majorana_terms.terms.items():
-    #     if term == ():
-    #         continue
-    #     coeffs_expanded = sp.expand(coeff_expr).as_coefficients_dict()
-    #
-    #     row = [float(sp.re(coeffs_expanded.get(var, 0))) for var in
-    #            T]  # Real part coefficients
-    #     rhs = float(sp.re(coeffs_expanded.get(1, 0)))  # Constant term
-    #
-    #     coeff_matrix.append(row)
-    #     rhs_vector.append(rhs)
-    #     constant_terms.append(rhs)
-    #
-    # coeff_matrix = np.array(coeff_matrix)
-    # rhs_vector = np.array(rhs_vector)
-    #
-    # # Number of constraints
-    # n_constraints = len(rhs_vector)
-    # n_vars = len(T)  # Number of variables in x
-    #
-    # # Create auxiliary variables u_i
-    # c = np.concatenate(
-    #     [np.zeros(n_vars), np.ones(n_constraints)])  # Minimize sum of u_i
-    #
-    # # Constraints: u_i >= Ax + b and u_i >= -(Ax + b)
-    # A_ub = np.vstack([
-    #     np.hstack([coeff_matrix, -np.eye(n_constraints)]),  # Ax + b <= u
-    #     np.hstack([-coeff_matrix, -np.eye(n_constraints)])  # -(Ax + b) <= u
-    # ])
-    #
-    # print(f"A_ub.shape: {A_ub.shape}")
-    #
-    # b_ub = np.hstack([rhs_vector, -rhs_vector])
-    #
-    # # Solve LP
-    # res = linprog(c, A_ub=A_ub, b_ub=b_ub)
-    #
-    # # Output results
-    # if res.success:
-    #     print(f"Optimal value (1-norm): {res.fun}")
-    #     print(f"Optimal u values: {res.x}")
-    # else:
-    #     print("Linear programming failed to find a solution.")
-
     one_norm_func = sp.lambdify((z, T), one_norm_expr,
                                 modules=['numpy'])
 

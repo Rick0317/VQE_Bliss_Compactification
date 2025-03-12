@@ -10,7 +10,7 @@ expectation
 )
 from BLISS.normal_bliss.customized_bliss_package import *
 from SolvableQubitHamiltonians.utils_basic import copy_ferm_hamiltonian
-
+from StatePreparation.hartree_fock import *
 
 def abs_of_dict_value(x):
     return np.abs(x[1])
@@ -66,7 +66,7 @@ if __name__ == '__main__':
     Ne = 4
     mol_name = "h4"
 
-    filename = f'../SolvableQubitHamiltonians/ham_lib/h4_sto-3g.pkl'
+    filename = f'../ham_lib/h4_sto-3g.pkl'
 
     with open(filename, 'rb') as f:
         Hamil = pickle.load(f)
@@ -113,8 +113,7 @@ if __name__ == '__main__':
         H = normal_ordered(commutator)
         H_in_q = ferm_to_qubit(H)
 
-        occupied_orbitals = [0, 1, 2, 3]
-        hf_state = get_hartree_fock(N, occupied_orbitals)
+        hf_state = get_bk_hf_state(N, Ne)
 
         number_operator = FermionOperator()
         for mode in range(N):
