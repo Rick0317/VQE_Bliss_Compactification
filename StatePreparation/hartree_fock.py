@@ -1,10 +1,5 @@
-import openfermion as of
-import numpy as np
-from scipy.linalg import eigh
-import scipy as sp
-import math
 from StatePreparation.reference_state_utils import *
-
+from openfermion import FermionOperator, bravyi_kitaev, get_sparse_operator as gso
 
 def get_bk_hf_state(n_qubits, n_occ):
     """
@@ -29,11 +24,13 @@ def get_bk_hf_state(n_qubits, n_occ):
 if __name__ == '__main__':
     n_qubits = 4
     n_occ = 2
-    bk_basis_state = get_bk_basis_states("0011", n_qubits)
-    index = find_index(bk_basis_state)
-    print(index)
+    hartree_fock_state = get_bk_hf_state(n_qubits, n_occ)
 
-    wfs = np.zeros(2 ** n_qubits)
-    wfs[index] = 1
+    op_part = bravyi_kitaev(FermionOperator(((2, 1), (2, 0))))
+    op_matrix = gso(op_part, n_qubits).toarray()
+    identity = np.eye(2 ** n_qubits)
+    zeros = np.zeros((2 ** n_qubits, 2 ** n_qubits))
+    killer = op_matrix - identity
 
-    print(wfs)
+    print(killer @ hartree_fock_state)
+

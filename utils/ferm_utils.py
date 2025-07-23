@@ -1,4 +1,4 @@
-from openfermion import FermionOperator, normal_ordered
+from openfermion import FermionOperator, normal_ordered, bravyi_kitaev
 import numpy as np
 
 
@@ -84,3 +84,15 @@ def ferm_op_to_tensors(fermion_operator: FermionOperator, N):
             term[5][0], term[6][0], term[7][0]] = coefficient
 
     return h1e, g2e, t3e, q4e
+
+
+def abs_of_dict_value(x):
+    return np.abs(x[1])
+
+def ferm_to_qubit(H: FermionOperator):
+    Hqub = bravyi_kitaev(H)
+    Hqub -= Hqub.constant
+    Hqub.compress()
+    Hqub.terms = dict(
+    sorted(Hqub.terms.items(), key=abs_of_dict_value, reverse=True))
+    return Hqub

@@ -30,30 +30,29 @@ def get_all_anti_hermitian(site: int):
     :param site:
     :return:
     """
-    operator_pool = set()
+    operator_pool = []
     for p in range(site):
         for q in range(site):
-            operator_pool.add(get_anti_hermitian_one_body((p, q)))
+            operator_pool.append(get_anti_hermitian_one_body((p, q)))
             for r in range(site):
                 for s in range(site):
-                    operator_pool.add(get_anti_hermitian_two_body((p, q, r, s)))
+                    operator_pool.append(get_anti_hermitian_two_body((p, q, r, s)))
 
     return operator_pool
 
 
-def get_all_virtual2occ_anti_hermitian(site: int, n_elec:int):
-    """
+def get_all_uccsd_anti_hermitian(site: int, n_elec:int):
+    """.
     quartic size of the generator pool.
     :param site:
     :return:
     """
-    operator_pool = set()
-    virtual_init = site - n_elec
-    for p in range(virtual_init, site):
+    operator_pool = []
+    for p in range(n_elec, site):
         for q in range(n_elec):
-            operator_pool.add(get_anti_hermitian_one_body((p, q)))
-            for r in range(virtual_init, site):
+            operator_pool.append(get_anti_hermitian_one_body((p, q)))
+            for r in range(n_elec, site):
                 for s in range(n_elec):
-                    operator_pool.add(get_anti_hermitian_two_body((p, q, r, s)))
+                    operator_pool.append(get_anti_hermitian_two_body((p, r, s, q)))
 
     return operator_pool

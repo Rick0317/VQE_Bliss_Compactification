@@ -22,7 +22,15 @@ class PauliString:
         for index in set(self.pauli_ops.keys()).intersection(other.pauli_ops.keys()):
             if not PauliOp((index, self.pauli_ops[index])).commutes(PauliOp((index, other.pauli_ops[index]))):
                 return False
-        return True  # All pairs commute if no anti-commuting pairs are found.
+        return True
+
+    def fully_commute(self, other):
+        if not isinstance(other, PauliString):
+            raise TypeError("Can only compare with PauliString objects.")
+        qubit_op1 = self.to_qubit_operator()
+        qubit_op2 = other.to_qubit_operator()
+        commutator = qubit_op1 * qubit_op2 - qubit_op2 * qubit_op1
+        return len(commutator.terms) == 0
 
     def to_qubit_operator(self, coeff=1.0):
         qubit_terms = tuple(
@@ -42,6 +50,18 @@ class PauliString:
 
     def __str__(self):
         return str(self.pauli_ops)
+
+    def __eq__(self, other):
+        if not isinstance(other, PauliString):
+            return False
+        if len(self.pauli_ops) != len(other.pauli_ops):
+            return False
+        for index, pauli in self.pauli_ops.items():
+            if pauli != other.pauli_ops[index]:
+                return False
+
+        return True
+
 
 
 def pauli_ops_to_qop(pauli_ops: dict):

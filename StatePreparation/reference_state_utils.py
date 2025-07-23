@@ -136,7 +136,7 @@ def get_reference_state(occ_no_state, gs_format = 'wfs'):
     """
     n_qubits = len(occ_no_state)
     bk_basis_state = get_bk_basis_states(occ_no_state, n_qubits)
-    index = find_index(bk_basis_state[0])
+    index = find_index(bk_basis_state)
 
     if gs_format == 'wfs':
         wfs = np.zeros(2**n_qubits)
@@ -151,6 +151,7 @@ def get_reference_state(occ_no_state, gs_format = 'wfs'):
 
         return dm
 
+
 def get_occ_no(mol, n_qubits):
     """
     Given some molecule, find the reference occupation number state.
@@ -159,7 +160,7 @@ def get_occ_no(mol, n_qubits):
     Returns:
         occ_no (str): Occupation no. vector.
     """
-    n_electrons = {'h2': 2, 'lih': 4, 'beh2': 6, 'h2o': 10, 'nh3': 10, 'n2': 14, 'hf':10, 'ch4':10, 'co':14, 'h4':4, 'ch2':8, 'heh':2, 'h6':6, 'nh':8, 'h3':2, 'h4sq':4, 'h2ost':10, 'beh2st':6, 'h2ost2':10, 'beh2st2':6}
+    n_electrons = {'h2': 2, 'lih': 4, 'beh2': 6, 'h2o': 10, 'nh3': 10, 'n2': 14, 'hf':10, 'ch4':10, 'co':14, 'h4':4, 'h3_generated':2, 'h3st':2,  'h4st':4, 'h4st2': 4, 'ch2':8, 'heh':2, 'h6':6, 'nh':8, 'h3':2, 'h4sq':4, 'h2ost':10, 'beh2st':6, 'h2ost2':10, 'beh2st2':6}
     occ_no = '1'*n_electrons[mol] + '0'*(n_qubits - n_electrons[mol])
 
     return occ_no
@@ -303,7 +304,7 @@ def create_hamiltonian_in_subspace(indices, Hq, n_qubits):
 
     return H_mat_sub
 
-def get_cisd_gs(mol, Hq, n_qubits, gs_format = 'dm', reduce_determinants = False, tf = 'bk'):
+def get_cisd_gs(mol, Hq, n_qubits, gs_format = 'wfs', reduce_determinants = False, tf = 'bk'):
     """
     Finds the CISD wavefunction/density matrix in qubit space.
     Args:

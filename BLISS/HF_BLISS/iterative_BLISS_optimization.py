@@ -1,8 +1,8 @@
 from scipy.optimize import minimize
 from openfermion import FermionOperator as FO
-from BLISS.IterativeBLISS.iterative_bliss import *
-from BLISS.IterativeBLISS.iterative_filter import filter_indices_iterative_HF
-
+from BLISS.HF_BLISS.iterative_bliss import *
+from BLISS.HF_BLISS.iterative_filter import filter_indices_iterative_HF
+from copy import deepcopy
 
 def copy_ferm_hamiltonian(H: FO):
     H_copy = FO().zero()
@@ -17,22 +17,11 @@ def copy_ferm_hamiltonian(H: FO):
 def params_to_tensor_specific_op(params, n, candidate_idx):
 
     tensor = np.zeros((n, n, n, n))
-    # candidate_list = [10, 11] + idx_list
     idx = 0
     for i in range(n):
         for j in range(n):
             for k in range(n):
                 for l in range(n):
-                    # if len({i, j, k, l}) == 4:
-                    #     evens_ij = sum(1 for x in [i, j] if x % 2 == 0)
-                    #     evens_kl = sum(1 for x in [k, l] if x % 2 == 0)
-                    #     if evens_ij == evens_kl:
-                    #         if any(x in idx_list for x in [i, j, k, l]):
-                    #             if not all(x in idx_list for x in [i, j, k, l]):
-                    #                 if (i, j, k, l) <= (l, k, j, i):
-                    #                     tensor[i, j, k, l] = params[idx]
-                    #                     tensor[l, k, j, i] = params[idx]
-                    #                     idx += 1
                     if (i, j, k, l) in candidate_idx:
                         tensor[i, j, k, l] = params[idx]
                         tensor[l, k, j, i] = params[idx]
@@ -49,12 +38,12 @@ def params_to_tensor_specific_op(params, n, candidate_idx):
     return ferm_op
 
 
-def construct_H_bliss_HF(H, params, N, Ne, idx_lists):
+def construct_H_bliss_HF(H: FermionOperator, params, N, Ne, idx_lists):
     total_number_operator = FermionOperator()
     for mode in range(N):
         total_number_operator += FermionOperator(((mode, 1), (mode, 0)))
 
-    occupation = [1 for _ in range(Ne)] + [0 for _ in range(N - Ne)]
+    occupation = [0 for _ in range(N - Ne)] + [1 for _ in range(Ne)]
     result = H
     prev_idx = 0
     for i in range(len(idx_lists)):
@@ -65,6 +54,11 @@ def construct_H_bliss_HF(H, params, N, Ne, idx_lists):
 
         t_ferm = params_to_tensor_specific_op(t, N, idx_list)
         result -= t_ferm * (FermionOperator(((i, 1), (i, 0))) - occupation[i])
+    copied_result = deepcopy(result)
+    for term, coeff in copied_result.terms.items():
+        if term[-1][1] == 0 and term[-1][0] < N - Ne:
+            print(term)
+            result -= FermionOperator(term, coeff)
 
     return result, t_ferm * (total_number_operator - Ne)
 

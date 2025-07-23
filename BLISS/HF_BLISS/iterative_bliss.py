@@ -18,12 +18,13 @@ def params_to_tensor_op(params, n):
     tensor = np.zeros((n, n, n, n))
     idx = 0
     for i in range(n):
-        for j in range(i, n):
+        for j in range(n):
             for k in range(n):
-                for l in range(k, n):
-                    tensor[i, j, k, l] = params[idx]
-                    tensor[l, k, j, i] = params[idx]
-                    idx += 1
+                for l in range(n):
+                    if (i, j, k, l) <= (l, k, j, i):
+                        tensor[i, j, k, l] = params[idx]
+                        tensor[l, k, j, i] = params[idx]
+                        idx += 1
 
     ferm_op = FermionOperator()
 
@@ -46,11 +47,11 @@ def construct_HF_BLISS(H, params, N, Ne):
 
     t_ferm = params_to_tensor_op(t, N)
 
-    for occupied in range(Ne):
-        result -= t_ferm * (FermionOperator(((occupied, 1), (occupied, 0))) - 1)
-
-    for empty in range(Ne, N):
+    for empty in range(N - Ne):
         result -= t_ferm * (FermionOperator(((empty, 1), (empty, 0))))
+
+    for occupied in range(N - Ne, N):
+        result -= t_ferm * (FermionOperator(((occupied, 1), (occupied, 0))) - 1)
 
     result -= t_ferm * (total_number_operator - Ne)
 
@@ -121,9 +122,9 @@ def symmetric_tensor_array_specific(name, n, candidate_idx):
     """
     symmetric_tensor = []
     for i in range(n):
-        for j in range(i, n):
+        for j in range(n):
             for k in range(n):
-                for l in range(k, n):
+                for l in range(n):
                     if (i, j, k, l) in candidate_idx:
                         symmetric_tensor.append(sp.Symbol(f"{name}_{i}{j}{k}{l}"))
 
@@ -142,7 +143,6 @@ def symmetric_tensor_from_triangle_specific(T, n, candidate_idx):
 
     tensor = np.zeros((n, n, n, n), dtype=object)
     idx = 0
-    # candidate_list = [10, 11] + idx_list
     for i in range(n):
         for j in range(n):
             for k in range(n):
@@ -164,11 +164,11 @@ def construct_majorana_terms_HF(ferm_op, N, Ne, T_list: List):
 
     param_op = ferm_op
 
-    for occupied in range(Ne):
-        param_op -= t_ferm_op_list[occupied] * (FermionOperator(((occupied, 1), (occupied, 0))) - 1)
+    for occupied in range(N - Ne):
+        param_op -= t_ferm_op_list[occupied] * (FermionOperator(((occupied, 1), (occupied, 0))))
 
-    for empty in range(Ne, N):
-        param_op -= t_ferm_op_list[empty] * (FermionOperator(((empty, 1), (empty, 0))))
+    for empty in range(N - Ne, N):
+        param_op -= t_ferm_op_list[empty] * (FermionOperator(((empty, 1), (empty, 0))) - 1)
 
     majo = get_custom_majorana_operator(param_op)
 

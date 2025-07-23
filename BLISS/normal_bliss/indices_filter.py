@@ -155,8 +155,8 @@ def filter_indices(H, N, Ne):
             if coeff != 0:
                 candidates_counter += 1
                 candidate_coeff.update(result)
-            else:
-                remove_list.update(result)
+            # else:
+            #     remove_list.update(result)
         else:
             invariant_1norm += abs(coeff)
 

@@ -7,10 +7,11 @@ from openfermion import FermionOperator
 def symmetric_tensor_array(name, n):
     symmetric_tensor = []
     for i in range(n):
-        for j in range(i, n):
+        for j in range(n):
             for k in range(n):
-                for l in range(k, n):
-                    symmetric_tensor.append(sp.Symbol(f"{name}_{i}{j}{k}{l}"))
+                for l in range(n):
+                    if (i, j, k, l) <= (l, k, j, i):
+                        symmetric_tensor.append(sp.Symbol(f"{name}_{i}{j}{k}{l}"))
 
     print("Length of Symmetric Tensor", len(symmetric_tensor))
 
@@ -28,9 +29,9 @@ def symmetric_tensor(T, n):
     tensor = np.zeros((n, n, n, n), dtype=object)
     idx = 0
     for i in range(n):
-        for j in range(i, n):
+        for j in range(n):
             for k in range(n):
-                for l in range(k, n):
+                for l in range(n):
                     if (i, j, k, l) <= (l, k, j, i):
                         tensor[i, j, k, l] = T[idx]
                         tensor[l, k, j, i] = T[idx]
@@ -46,29 +47,34 @@ def tensor_to_ferm_op(tensor, n):
         for j in range(n):
             for k in range(n):
                 for l in range(n):
-                    ferm_op += FermionOperator(f"{i}^ {j} {k}^ {l}",
-                                               tensor[i, j, k, l])
-                    # ferm_op += FermionOperator(f"{i}^ {j} {k}^ {l}",
-                    #                            1)
+                    if (i, j, k, l) <= (l, k, j, i):
+                        ferm_op += FermionOperator(f"{i}^ {j} {k}^ {l}",
+                                                   tensor[i, j, k, l])
+                        ferm_op += FermionOperator(f"{l}^ {k} {j}^ {i}",
+                                                   tensor[l, k, j, i])
 
     return ferm_op
 
 
-def filter_indices_iterative_HF(H, N, Ne):
+def filter_indices_iterative_non_overlap(H, N, Ne, j, b):
     """
 
     :param H: The Hamiltonian to which we filter the indices.
     :param N: The number of qubits
     :param Ne: The number of occupations
-    :return: List of list of indices that will be retained after filtering.
+    :param j: The virtual index
+    :param b: The occupied index
+    :return: List of lists of indices that will be retained after filtering.
+    The list should only contain N - 2 elements
     """
 
-    occupation = [1 for _ in range(Ne)] + [0 for _ in range(N - Ne)]
+    occupation = ([0 for _ in range(N - Ne)] + [1 for _ in range(Ne)])
+
+    sites_list = [p for p in range(N) if p != j and p != b]
 
     idx_lists = []
-    for i in range(N):
+    for i in sites_list:
         print(i)
-        # The killer coefficient candidates. We are going to remove unncessary ones from this
         killer_coeff_candidate = symmetric_tensor_array(f'T{i}', N)
 
         # Tensor representation of the coefficient candidates

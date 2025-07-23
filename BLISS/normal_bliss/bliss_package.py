@@ -10,6 +10,13 @@ import numpy as np
 
 
 def params_to_matrix_op(params, n):
+    """
+    Given a parameter set, return Fermionic Operator object representing the
+    Hamiltonian with the parameters used in the coefficient tensor.
+    :param params: upper-triangular matrix params: n*(n+1)/2
+    :param n:
+    :return:
+    """
     ferm_op = FermionOperator()
     upper_tri_indices = np.triu_indices(n)
     sym_matrix = np.zeros((n, n))

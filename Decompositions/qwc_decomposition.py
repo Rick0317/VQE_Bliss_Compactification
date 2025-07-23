@@ -1,11 +1,10 @@
 import numpy as np
-from utils.paulis import PauliString
+from entities.paulis import PauliString
 from openfermion import QubitOperator, FermionOperator, bravyi_kitaev
 
 
 def qwc_decomposition(Hqub):
     sorted_terms = sorted(Hqub.terms, key=lambda x: np.abs(Hqub.terms[x]), reverse=True)
-    print(sorted_terms[10])
     groups = []
 
     for term in sorted_terms:

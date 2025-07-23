@@ -7,7 +7,7 @@ from openfermion import (
     QubitOperator
 )
 import numpy as np
-from utils.paulis import PauliString, pauli_ops_to_qop
+from entities.paulis import PauliString, pauli_ops_to_qop
 from SymplecticVectorSpace.space_F_definition import SpaceFVector, vector_2_pauli
 from itertools import product
 from Decompositions.qwc_decomposition import qwc_decomposition

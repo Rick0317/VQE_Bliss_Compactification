@@ -6,12 +6,13 @@ get_majorana_operator,
 bravyi_kitaev,
 variance,
 get_sparse_operator as gso,
-expectation
+expectation,
+hermitian_conjugated
 )
 from Decompositions.qwc_decomposition import qwc_decomposition
 from SolvableQubitHamiltonians.utils_basic import copy_ferm_hamiltonian
 from SolvableQubitHamiltonians.main_utils_partitioning import copy_hamiltonian
-from BLISS.IterativeBLISS.iterative_BLISS_optimization import (
+from BLISS.HF_BLISS.iterative_BLISS_optimization import (
     bliss_three_body_indices_filtered_HF)
 from OperatorPools.generalized_fermionic_pool import *
 from StatePreparation.hartree_fock import get_bk_hf_state
@@ -135,6 +136,8 @@ if __name__ == '__main__':
 
         bliss_output = bliss_three_body_indices_filtered_HF(copied_H2, N, Ne)
 
+        bliss_output = (bliss_output + hermitian_conjugated(bliss_output)) / 2
+
         bliss_exp = expectation(gso(ferm_to_qubit(bliss_output), N),
                                 hf_state)
         print(f"BLISS Expectation value Qubit : {bliss_exp}")
@@ -169,7 +172,7 @@ if __name__ == '__main__':
 
         print(f"Blissed variance: {blissed_vars}")
 
-        file_name = f"strong_killer_bliss_hf_result_{mol_name}.csv"
+        file_name = f"strong_killer_bliss_hf_result_march14_{mol_name}.csv"
 
         file_exists = os.path.isfile(file_name)
         # Open the file in append mode or write mode

@@ -179,7 +179,7 @@ if __name__ == '__main__':
 
         print(f"Blissed variance: {blissed_vars}")
 
-        file_name = f"bliss_commutator_hf_result_{mol_name}.csv"
+        file_name = f"bliss_commutator_hf_result_mar13_{mol_name}.csv"
 
         file_exists = os.path.isfile(file_name)
         # Open the file in append mode or write mode

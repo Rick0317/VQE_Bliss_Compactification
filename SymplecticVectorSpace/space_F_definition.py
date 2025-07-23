@@ -1,4 +1,4 @@
-from utils.paulis import PauliString
+from entities.paulis import PauliString
 pauli_2_binary = {'X': (1, 0), 'Y': (1, 1), 'Z': (0, 1), 'I': (0, 0)}
 binary_2_pauli = {(0, 0): 'I', (0, 1): 'Z', (1, 0): 'X', (1, 1): 'Y'}
 

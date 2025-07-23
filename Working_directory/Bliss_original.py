@@ -91,10 +91,10 @@ if __name__ == '__main__':
     moltag = 'Beh2'
     methodtag = 'qwc'
 
-    N = 8
-    Ne = 4
+    N = 4
+    Ne = 2
 
-    filename = f'../SolvableQubitHamiltonians/ham_lib/h4_sto-3g.pkl'
+    filename = f'../ham_lib/h2_fer.bin'
     with open(filename, 'rb') as f:
         Hamil = pickle.load(f)
 
@@ -104,6 +104,7 @@ if __name__ == '__main__':
     two_body_list = filter_indices_normal_bliss(Hamil, N, Ne)
 
     H_q = ferm_to_qubit(Hamil)
+    print(f"Fermion Hamiltonian {H_q}")
     print("Commutator Obtained in Fermion and Qubit space")
     H_copy = copy_hamiltonian(H_q)
     # decomp = sorted_insertion_decomposition(H_copy, methodtag)
