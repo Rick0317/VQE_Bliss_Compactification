@@ -20,15 +20,21 @@ from openfermion import FermionOperator, bravyi_kitaev, get_sparse_operator
 
 # Add path to import from parent directories
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from OperatorPools.generalized_fermionic_pool import get_all_uccsd_anti_hermitian, get_all_anti_hermitian
+from OperatorPools.generalized_fermionic_pool import get_all_uccsd_anti_hermitian, get_spin_considered_uccsd_anti_hermitian, get_all_anti_hermitian
 from utils.ferm_utils import ferm_to_qubit
-from SolvableQubitHamiltonians.fermi_util import get_commutator
+from SolvableQubitHamiltonians.qubit_util import get_commutator_qubit
 from Decompositions.qwc_decomposition import qwc_decomposition
 from StatePreparation.reference_state_utils import get_reference_state, get_occ_no
-from adapt_vqe_qiskit import (create_ansatz_circuit, measure_expectation,
+from BestArmIdentification.ADAPTVQE.adapt_vqe_qiskit import (create_ansatz_circuit, measure_expectation,
                               get_statevector, openfermion_qubitop_to_sparsepauliop,
-                              fermion_operator_to_qiskit_operator, exact_ground_state_energy, save_results_to_csv)
+                              exact_ground_state_energy, save_results_to_csv)
+from BestArmIdentification.ADAPTVQE.adapt_utils import qubit_operator_to_qiskit_operator
 import gc, psutil
+from get_generator_pool import get_generator_pool
+import multiprocessing
+
+# Set multiprocessing start method to 'spawn' for better memory management
+multiprocessing.set_start_method("spawn", force=True)
 
 
 def pauli_commute(p1, p2):
@@ -94,54 +100,161 @@ def get_diagonalizing_pauli(group_op):
 
     return ''.join(diagonalizing_pauli)
 
+def _process_single_operator(args):
+    """Worker function for parallel commutator processing"""
+    i, H_qubit_op, qubit_generator, n_qubits = args
 
-def get_qubit_w_commutation_group(H_fermion, pool_fermion, n_qubits):
-    """
-    Categorizes each QWC group and express each fragment with the categories
-    :param H_fermion: Hamiltonian in Fermion Operator
-    :param pool_fermion: The pool of fermion generators
-    :param n_qubits: The number of qubits
-    :return:
-    """
-    # {Diagonalizing Unitary of a QWC group: i}
-    fragment_group_indices_map = {}
-
-    # {ferm_op: [1, 2, 3, ... ]}
-    commutator_indices_map = {}
-
-    for i, ferm_op in enumerate(pool_fermion):
-        commutator_indices_map[i] = []
-        # Compute fermion commutator [H, G]
-        commutator_fermion = get_commutator(H_fermion, ferm_op)
+    try:
+        # Clear memory before starting
+        gc.collect()
 
         # Convert to qubit operator
-        commutator_qubit = ferm_to_qubit(commutator_fermion)
+        commutator_qubit = get_commutator_qubit(H_qubit_op, qubit_generator)
 
         # Decompose into Pauli groups
         pauli_groups = qwc_decomposition(commutator_qubit)
 
+        # Clean up
+        del commutator_qubit
+        gc.collect()
+
+        # Store both the group data and pauli strings for does_diagonalize checking
+        groups_data = []
         for group in pauli_groups:
-            # Check which unitary diagonalizes the group.
             group_op = openfermion_qubitop_to_sparsepauliop(group, n_qubits)
+            # Store the pauli strings and coefficients instead of the SparsePauliOp object
+            group_pauli_list = group_op.to_list()
+            groups_data.append(group_pauli_list)
+            # Clean up each group after processing
+            del group_op
 
-            # Check if pauli_string commutes with any existing unitary
-            found_commuting_group = False
-            for key_unitary, group_index in fragment_group_indices_map.items():
-                # We use does_diagonalize to check if the diagonalizing unitary
-                # diagonalizes all the pauli_string in the group
-                if does_diagonalize(group_op, key_unitary):
-                    # If the group already exists, add the index of the existing QWC group
-                    commutator_indices_map[i].append(group_index)
-                    found_commuting_group = True
-                    break
+        # Final cleanup
+        del pauli_groups
+        gc.collect()
 
-            # If no commuting group found, create a new group
-            if not found_commuting_group:
+        return i, groups_data
+
+    except Exception as e:
+        print(f"Error processing operator {i}: {e}")
+        gc.collect()  # Clean up on error too
+        return i, []
+
+
+def get_qubit_w_commutation_group_parallel(H_qubit_op, generator_pool, n_qubits, max_processes=None):
+    """
+    Parallelized version of get_qubit_w_commutation_group
+    Categorizes each QWC group and express each fragment with the categories
+    :param H_fermion: Hamiltonian in Fermion Operator
+    :param pool_fermion: The pool of fermion generators
+    :param n_qubits: The number of qubits
+    :param max_processes: Maximum number of processes to use (None for auto)
+    :return: fragment_group_indices_map, commutator_indices_map
+    """
+
+    # Step 1: Parallel computation of all commutators and QWC groups
+    print(f"Computing commutators for {len(generator_pool)} operators in parallel...")
+
+    args_list = [(i, H_qubit_op, qubit_generator, n_qubits)
+                 for i, qubit_generator in enumerate(generator_pool)]
+
+    # Determine number of processes (limit for memory management)
+    available_processes = cpu_count()
+    if max_processes is not None:
+        num_processes = min(max_processes, available_processes, len(args_list))
+    else:
+        # Use fewer processes for large pools to manage memory
+        if len(generator_pool) > 200:
+            num_processes = min(4, available_processes)  # Limit to 4 for large pools
+        else:
+            num_processes = min(available_processes, len(args_list))
+
+    print(f"Using {num_processes} processes for commutator computation (out of {available_processes} available)...")
+
+    # Use multiprocessing to compute all commutators in parallel
+    try:
+        with Pool(num_processes) as p:
+            operator_groups = p.map(_process_single_operator, args_list)
+        print("Parallel commutator computation completed successfully")
+    except Exception as e:
+        print(f"Parallel processing failed ({e}), falling back to sequential processing")
+        # Fallback to sequential processing
+        operator_groups = []
+        for args in args_list:
+            result = _process_single_operator(args)
+            operator_groups.append(result)
+
+    # Step 2: Optimized sequential grouping with batching and fast pre-filtering
+    print("Organizing QWC groups using optimized does_diagonalize...")
+    fragment_group_indices_map = {}
+    commutator_indices_map = {}
+
+    # Process operators in smaller batches to manage memory
+    batch_size = 25  # Process 25 operators at a time
+    total_operators = len(operator_groups)
+
+    for batch_start in range(0, total_operators, batch_size):
+        batch_end = min(batch_start + batch_size, total_operators)
+        print(f"Processing batch {batch_start//batch_size + 1}/{(total_operators-1)//batch_size + 1} (operators {batch_start}-{batch_end-1})")
+
+        # Force cleanup before each batch
+        gc.collect()
+
+        # Process this batch
+        for idx in range(batch_start, batch_end):
+            i, groups_data = operator_groups[idx]
+            commutator_indices_map[i] = []
+
+            # Process each QWC group for this operator
+            for group_pauli_list in groups_data:
+                # Fast pre-filtering: get diagonalizing pauli first (cheaper)
+                group_op = SparsePauliOp.from_list(group_pauli_list)
                 diagonalizing_pauli = get_diagonalizing_pauli(group_op)
-                new_group_index = len(fragment_group_indices_map)
-                fragment_group_indices_map[diagonalizing_pauli] = new_group_index
-                commutator_indices_map[i].append(new_group_index)
 
+                # Fast check: exact match first (most common case)
+                if diagonalizing_pauli in fragment_group_indices_map:
+                    group_index = fragment_group_indices_map[diagonalizing_pauli]
+                    commutator_indices_map[i].append(group_index)
+                    del group_op
+                    continue
+
+                # Slower check: does_diagonalize for remaining cases
+                found_commuting_group = False
+                # Limit the search to prevent memory explosion
+                max_groups_to_check = len(fragment_group_indices_map)
+                groups_checked = 0
+
+                for key_unitary, group_index in fragment_group_indices_map.items():
+                    if groups_checked >= max_groups_to_check:
+                        break
+                    groups_checked += 1
+
+                    # Skip exact matches (already checked above)
+                    if key_unitary == diagonalizing_pauli:
+                        continue
+
+                    if does_diagonalize(group_op, key_unitary):
+                        commutator_indices_map[i].append(group_index)
+                        found_commuting_group = True
+                        break
+
+                # If no existing unitary works, create a new group
+                if not found_commuting_group:
+                    new_group_index = len(fragment_group_indices_map)
+                    fragment_group_indices_map[diagonalizing_pauli] = new_group_index
+                    commutator_indices_map[i].append(new_group_index)
+
+                # Immediate cleanup
+                del group_op
+
+            # Cleanup after each operator
+            if i % 10 == 0:
+                gc.collect()
+
+        # Force cleanup after each batch
+        print(f"  Batch completed. Current QWC groups: {len(fragment_group_indices_map)}")
+        gc.collect()
+
+    print(f"Found {len(fragment_group_indices_map)} unique QWC groups")
     return fragment_group_indices_map, commutator_indices_map
 
 
@@ -183,12 +296,12 @@ def load_commutator_maps(filename):
         return None, None
 
 
-def generate_commutator_cache_filename(molecule_name, n_qubits, n_electrons, pool_size):
+def generate_commutator_cache_filename(molecule_name, n_qubits, n_electrons, pool_size, pool_type):
     """Generate a cache filename based on molecular system parameters"""
-    return f"commutator_maps_{molecule_name}_{n_qubits}q_{n_electrons}e_{pool_size}pool.json"
+    return f"commutator_maps_{molecule_name}_{n_qubits}q_{n_electrons}e_{pool_size}_{pool_type}.json"
 
 
-def get_commutator_maps_cached(H_fermion, pool_fermion, n_qubits, molecule_name='h4', n_electrons=4, cache_file=None):
+def get_commutator_maps_cached(H_qubit_op, generator_pool, n_qubits, molecule_name='h4', n_electrons=4, cache_file=None):
     """
     Get commutator maps with caching support
 
@@ -208,14 +321,16 @@ def get_commutator_maps_cached(H_fermion, pool_fermion, n_qubits, molecule_name=
         fragment_map, commutator_map = load_commutator_maps(cache_file)
         if fragment_map is not None and commutator_map is not None:
             # Verify the cache matches current pool size
-            if len(commutator_map) == len(pool_fermion):
+            if len(commutator_map) == len(generator_pool):
                 return fragment_map, commutator_map
             else:
-                print(f"Cache size mismatch: expected {len(pool_fermion)}, got {len(commutator_map)}")
+                print(f"Cache size mismatch: expected {len(generator_pool)}, got {len(commutator_map)}")
 
     # Compute commutator maps if not cached or cache invalid
     print("Computing commutator maps...")
-    fragment_map, commutator_map = get_qubit_w_commutation_group(H_fermion, pool_fermion, n_qubits)
+    # Use fewer processes for memory management with large pools
+    max_processes = cpu_count() - 4
+    fragment_map, commutator_map = get_qubit_w_commutation_group_parallel(H_qubit_op, generator_pool, n_qubits, max_processes)
 
     # Save to cache if filename provided
     if cache_file is not None:
@@ -282,7 +397,7 @@ def get_counts_for_each_fragment(current_circuit, fragment_group_indices_map, ac
     ]
 
     # Use multiprocessing to parallelize measurements
-    num_processes = 2 # min(cpu_count(), len(args_list))
+    num_processes = 20 # min(cpu_count(), len(args_list))
 
     counts_for_each_fragment = {}
 
@@ -310,7 +425,7 @@ def get_counts_for_each_fragment(current_circuit, fragment_group_indices_map, ac
     return counts_for_each_fragment
 
 
-def compute_commutator_gradient(H_fermion, generator_ferm, fragment_indices, counts_for_each_fragment, n_qubits, shots=8192):
+def compute_commutator_gradient(H_qubit_op, generator_op, fragment_indices, counts_for_each_fragment, n_qubits, shots=8192):
     """
     Compute the energy gradient of the generator
     :param H_fermion: Fermion Operator of the Hamiltonian
@@ -319,10 +434,9 @@ def compute_commutator_gradient(H_fermion, generator_ferm, fragment_indices, cou
     :param counts_for_each_fragment: The measurement information of the state for each fragment
     :return:
     """
-    commutator_fermion = get_commutator(H_fermion, generator_ferm)
 
     # Convert to qubit operator
-    commutator_qubit = ferm_to_qubit(commutator_fermion)
+    commutator_qubit = get_commutator_qubit(H_qubit_op, generator_op)
 
     # Decompose into QWC groups
     pauli_groups = qwc_decomposition(commutator_qubit)
@@ -349,9 +463,29 @@ def compute_commutator_gradient(H_fermion, generator_ferm, fragment_indices, cou
     return total_expectation
 
 
-def bai_find_the_best_arm(current_circuit, H_fermion, pool_fermion, fragment_group_indices_map, commutator_indices_map, iteration, delta= 0.05, max_rounds=10):
+def _compute_single_gradient_bai(args):
+    """Worker function for parallel gradient computation in BAI"""
+    try:
+        arm_index, H_qubit_op, generator_op, fragment_indices, counts_for_each_fragment, n_qubits, shots = args
 
-    K = len(pool_fermion)
+        # Compute gradient for this arm
+        reward = compute_commutator_gradient(H_qubit_op, generator_op,
+                                             fragment_indices,
+                                             counts_for_each_fragment, n_qubits,
+                                             shots)
+
+        # Clean up and return
+        gc.collect()
+        return arm_index, reward
+
+    except Exception as e:
+        print(f"Error computing gradient for arm {arm_index}: {e}")
+        gc.collect()
+        return arm_index, 0.0
+
+def bai_find_the_best_arm(current_circuit, H_qubit_op, generator_pool, fragment_group_indices_map, commutator_indices_map, iteration, delta= 0.05, max_rounds=10):
+
+    K = len(generator_pool)
     active_arms = list(range(K))
     estimates = np.zeros(K)
     pulls = np.zeros(K)
@@ -359,6 +493,7 @@ def bai_find_the_best_arm(current_circuit, H_fermion, pool_fermion, fragment_gro
     rounds = 0
     total_shots = 0
     total_measurements_across_fragments = 0
+    measurements_trend_bai = []
 
     print(f"Number of active QWC groups: {len(active_qwc_groups)}")
 
@@ -366,9 +501,10 @@ def bai_find_the_best_arm(current_circuit, H_fermion, pool_fermion, fragment_gro
         gc.collect()
         rounds += 1
         print(f"Round {rounds}")
-        shots = 512
+        shots = 1024
         total_shots += shots
         total_measurements_across_fragments += shots * len(active_qwc_groups)
+        measurements_trend_bai.append(total_measurements_across_fragments)
 
         counts_for_each_fragment = get_counts_for_each_fragment(
             current_circuit,
@@ -377,9 +513,44 @@ def bai_find_the_best_arm(current_circuit, H_fermion, pool_fermion, fragment_gro
             shots=shots
         )
 
-        for i in active_arms:
-            ferm_op = pool_fermion[i]
-            rewards = compute_commutator_gradient(H_fermion, ferm_op, commutator_indices_map[i], counts_for_each_fragment, n_qubits, shots)
+        # Parallel gradient computation for all active arms
+        if len(active_arms) > 1:
+            # Prepare arguments for parallel processing
+            args_list = [
+                (i, H_qubit_op, generator_pool[i], commutator_indices_map[i],
+                 counts_for_each_fragment, n_qubits, shots)
+                for i in active_arms
+            ]
+
+            # Use multiprocessing for parallel gradient computation
+            num_processes = min(cpu_count() - 4, len(active_arms))
+
+            try:
+                with Pool(num_processes) as p:
+                    gradient_results = p.map(_compute_single_gradient_bai, args_list)
+
+                # Update estimates and pulls based on parallel results
+                for arm_index, reward in gradient_results:
+                    estimates[arm_index] = (estimates[arm_index] * (total_shots - shots) + reward * shots) / total_shots
+                    pulls[arm_index] += shots
+
+                print(f"  Computed gradients for {len(active_arms)} arms in parallel")
+
+            except Exception as e:
+                print(f"Parallel gradient computation failed ({e}), falling back to sequential")
+                # Fallback to sequential processing
+                for i in active_arms:
+                    generator_op = generator_pool[i]
+                    rewards = compute_commutator_gradient(H_qubit_op, generator_op, commutator_indices_map[i],
+                                                        counts_for_each_fragment, n_qubits, shots)
+                    estimates[i] = (estimates[i] * (total_shots - shots) + rewards * shots) / total_shots
+                    pulls[i] += shots
+        else:
+            # Single arm - no need for multiprocessing overhead
+            i = active_arms[0]
+            generator_op = generator_pool[i]
+            rewards = compute_commutator_gradient(H_qubit_op, generator_op, commutator_indices_map[i],
+                                                counts_for_each_fragment, n_qubits, shots)
             estimates[i] = (estimates[i] * (total_shots - shots) + rewards * shots) / total_shots
             pulls[i] += shots
 
@@ -411,10 +582,10 @@ def bai_find_the_best_arm(current_circuit, H_fermion, pool_fermion, fragment_gro
     means = estimates
     print(f"Active arms: {active_arms}")
     best_arm = max(np.array(active_arms), key=lambda i: abs(means[i]))
-    return abs(means[best_arm]), best_arm, total_measurements_across_fragments
+    return abs(means[best_arm]), best_arm, total_measurements_across_fragments, measurements_trend_bai
 
 
-def adapt_vqe_qiskit(H_qubit_op, n_qubits, n_electrons, pool, H_fermion, pool_fermion, fragment_group_indices_map, commutator_indices_map, max_iter=30, grad_tol=1e-2, verbose=True, use_multiprocessing=True):
+def adapt_vqe_qiskit(H_sparse_pauli_op, n_qubits, n_electrons, H_qubit_op, generator_pool, fragment_group_indices_map, commutator_indices_map, max_iter=30, grad_tol=1e-2, verbose=True, use_multiprocessing=True):
     """
     ADAPT-VQE algorithm with multiprocessing support for gradient computation.
 
@@ -426,11 +597,13 @@ def adapt_vqe_qiskit(H_qubit_op, n_qubits, n_electrons, pool, H_fermion, pool_fe
     ansatz_ops = []
     params = []
     energies = []
-    total_measurements = 0  # Track total measurements throughout the process
+    total_measurements = 0
+    total_measurements_at_each_step = []
+    total_measurements_trend_bai = {}
 
     final_circuit = create_ansatz_circuit(n_qubits, n_electrons, ansatz_ops,
                                           params)
-    energy = measure_expectation(final_circuit, H_qubit_op)
+    energy = measure_expectation(final_circuit, H_sparse_pauli_op)
     print(f"HF energy (Qiskit): {energy}")
 
     for iteration in range(max_iter):
@@ -440,22 +613,22 @@ def adapt_vqe_qiskit(H_qubit_op, n_qubits, n_electrons, pool, H_fermion, pool_fe
 
         # Compute gradients for all pool operators using commutator measurement
         grads = []
-        if verbose:
-            print(f"Computing gradients for {len(pool)} operators...")
 
 
 
-        max_grad, best_idx, total_measurements_across_fragments = (
-            bai_find_the_best_arm(current_circuit, H_fermion, pool_fermion, fragment_group_indices_map, commutator_indices_map, iteration))
+        max_grad, best_idx, total_measurements_across_fragments, measurements_trend_bai = (
+            bai_find_the_best_arm(current_circuit, H_qubit_op, generator_pool, fragment_group_indices_map, commutator_indices_map, iteration))
 
         total_measurements += total_measurements_across_fragments
+        total_measurements_at_each_step.append(total_measurements)
+        total_measurements_trend_bai[iteration] = measurements_trend_bai
 
         if verbose:
             print(f"Iteration {iteration}: max gradient = {max_grad:.6e}, best = {best_idx}")
             # Print some gradient values for debugging
             for i, grad in enumerate(grads):
                 if i % 10 == 0:
-                    print(f"  Gradient {i+1}/{len(pool)}: {grad:.6e}")
+                    print(f"  Gradient {i+1}: {grad:.6e}")
 
         if max_grad < grad_tol:
             if verbose:
@@ -463,13 +636,13 @@ def adapt_vqe_qiskit(H_qubit_op, n_qubits, n_electrons, pool, H_fermion, pool_fe
             break
 
         # Add best operator to ansatz
-        ansatz_ops.append(pool[best_idx])
+        ansatz_ops.append(qubit_operator_to_qiskit_operator(generator_pool[best_idx], n_qubits))
         params.append(0.0)
 
                 # Optimize parameters using scipy.optimize.minimize
         def vqe_obj(x):
             circuit = create_ansatz_circuit(n_qubits, n_electrons, ansatz_ops, x)
-            energy = measure_expectation(circuit, H_qubit_op)
+            energy = measure_expectation(circuit, H_sparse_pauli_op)
             return energy
 
         # Debug: Test objective function at a few points
@@ -492,7 +665,7 @@ def adapt_vqe_qiskit(H_qubit_op, n_qubits, n_electrons, pool, H_fermion, pool_fe
 
         # Update energy
         final_circuit = create_ansatz_circuit(n_qubits, n_electrons, ansatz_ops, params)
-        energy = measure_expectation(final_circuit, H_qubit_op)
+        energy = measure_expectation(final_circuit, H_sparse_pauli_op)
         energies.append(energy)
 
         if verbose:
@@ -505,61 +678,59 @@ def adapt_vqe_qiskit(H_qubit_op, n_qubits, n_electrons, pool, H_fermion, pool_fe
     if verbose:
         print(f"Total measurements used: {total_measurements}")
 
-    return energies, params, ansatz_ops, final_state, total_measurements
-
+    return energies, params, ansatz_ops, final_state, total_measurements, total_measurements_at_each_step, total_measurements_trend_bai
 
 
 if __name__ == "__main__":
+    if len(sys.argv) < 6:
+        print("Usage: python my_script.py <mol_file> <mol> <n_qubits> <n_electrons> <pool_type>")
+        sys.exit(1)
+
+    mol_file = sys.argv[1]
+    # Pre transform all the operators to qubit operators
     # Load H4 Hamiltonian from file
-    with open('../../ham_lib/lih_fer.bin', 'rb') as f:
+    with open(f'ham_lib/{mol_file}', 'rb') as f:
         fermion_op = pickle.load(f)
-    mol = 'lih'
+    mol = sys.argv[2]
+    n_qubits = int(sys.argv[3])
+    n_electrons = int(sys.argv[4])
+    pool_type = sys.argv[5]
 
-    # Determine n_qubits from Hamiltonian
-    qubit_op = ferm_to_qubit(fermion_op)
-    n_qubits = max(idx for term in qubit_op.terms for idx, _ in term) + 1
-    n_electrons = 4  # For H4
-
-    # Convert to Qiskit SparsePauliOp
-    H_qubit_op = openfermion_qubitop_to_sparsepauliop(qubit_op, n_qubits)
+    H_qubit_op = ferm_to_qubit(fermion_op)
+    H_sparse_pauli_op = openfermion_qubitop_to_sparsepauliop(H_qubit_op, n_qubits)
 
     # Compute exact ground state energy
-    H_sparse = H_qubit_op.to_matrix(sparse=True)
+    H_sparse = H_sparse_pauli_op.to_matrix(sparse=True)
     exact_energy, exact_gs = exact_ground_state_energy(H_sparse)
     print(f"Exact ground state energy (diagonalization): {exact_energy:.8f}")
 
+    # Prepare Hartree-Fock state
     ref_occ = get_occ_no(mol, n_qubits)
     hf_state = get_reference_state(ref_occ, gs_format='wfs')
 
-
-    # Build UCCSD operator pool and convert to Qiskit Operators
-    print(f"Building UCCSD pool for {n_qubits} qubits, {n_electrons} electrons...")
-    uccsd_pool_fermion = list(get_all_uccsd_anti_hermitian(n_qubits, n_electrons))
-    pool = [fermion_operator_to_qiskit_operator(op, n_qubits) for op in uccsd_pool_fermion]
-    print(f"UCCSD pool size: {len(pool)}")
+    generator_pool = get_generator_pool(pool_type, n_qubits, n_electrons)
+    print(f"Generator pool size: {len(generator_pool)}")
 
     # Generate cache filename for commutator maps
-    cache_filename = generate_commutator_cache_filename('lih', n_qubits, n_electrons, len(uccsd_pool_fermion))
+    cache_filename = generate_commutator_cache_filename(mol, n_qubits, n_electrons, len(generator_pool), pool_type)
 
     # Get commutator maps with caching
     fragment_group_indices_map, commutator_indices_map = get_commutator_maps_cached(
-        fermion_op, uccsd_pool_fermion, n_qubits,
+        H_qubit_op, generator_pool, n_qubits,
         molecule_name=mol, n_electrons=n_electrons, cache_file=cache_filename)
 
     print(f"QWC groups found: {len(fragment_group_indices_map)}")
     print(f"Commutator mappings for {len(commutator_indices_map)} operators")
 
 
-    # Run ADAPT-VQE with commutator gradients (using multiprocessing for gradient calculation)
-
     # Configuration parameters
     use_parallel = True
     max_workers = None
-    executor_type = 'multiprocessing'  # For this version
+    executor_type = 'multiprocessing'
     molecule_name = mol
 
-    energies, params, ansatz, final_state, total_measurements = adapt_vqe_qiskit(
-        H_qubit_op, n_qubits, n_electrons, pool, fermion_op, uccsd_pool_fermion,
+    energies, params, ansatz, final_state, total_measurements, total_measurements_at_each_step, total_measurements_trend_bai = adapt_vqe_qiskit(
+        H_sparse_pauli_op, n_qubits, n_electrons, H_qubit_op, generator_pool,
         fragment_group_indices_map, commutator_indices_map)
 
     # Calculate results
@@ -577,16 +748,19 @@ if __name__ == "__main__":
     # Save results to CSV
     save_results_to_csv(
         final_energy=final_energy,
+        energy_at_each_step=energies,
         total_measurements=total_measurements,
         exact_energy=exact_energy,
         fidelity=overlap,
         molecule_name=molecule_name,
         n_qubits=n_qubits,
         n_electrons=n_electrons,
-        pool_size=len(pool),
+        pool_size=len(generator_pool),
         use_parallel=use_parallel,
         executor_type=executor_type,
         max_workers=max_workers,
         ansatz_depth=ansatz_depth,
-        filename='adapt_vqe_qubitwise_bai_results.csv'  # Different filename to distinguish this qubit-wise approach
+        total_measurements_at_each_step=total_measurements_at_each_step,
+        total_measurements_trend_bai=total_measurements_trend_bai,
+        filename=f'adapt_vqe_qubitwise_bai_{mol}_{pool_type}_results.csv'
     )

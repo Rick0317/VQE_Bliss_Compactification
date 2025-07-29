@@ -90,6 +90,11 @@ def abs_of_dict_value(x):
     return np.abs(x[1])
 
 def ferm_to_qubit(H: FermionOperator):
+    """
+    Converts a FermionOperator to a qubit with Bravyi Kitaev
+    :param H:
+    :return:
+    """
     Hqub = bravyi_kitaev(H)
     Hqub -= Hqub.constant
     Hqub.compress()

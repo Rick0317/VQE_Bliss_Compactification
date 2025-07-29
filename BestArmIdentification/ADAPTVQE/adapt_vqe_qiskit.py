@@ -28,7 +28,7 @@ from StatePreparation.reference_state_utils import get_reference_state, get_occ_
 def save_results_to_csv(final_energy, total_measurements, exact_energy, fidelity,
                        molecule_name, n_qubits, n_electrons, pool_size,
                        use_parallel, executor_type, max_workers,
-                       ansatz_depth, filename='adapt_vqe_results.csv'):
+                       ansatz_depth,  total_measurements_at_each_step=[], total_measurements_trend_bai=[], energy_at_each_step=[], filename='adapt_vqe_results.csv'):
     """
     Save ADAPT-VQE results to a CSV file.
 
@@ -69,7 +69,10 @@ def save_results_to_csv(final_energy, total_measurements, exact_energy, fidelity
         'ansatz_depth': ansatz_depth,
         'use_parallel': use_parallel,
         'executor_type': executor_type if use_parallel else 'serial',
-        'max_workers': max_workers if use_parallel else 1
+        'max_workers': max_workers if use_parallel else 1,
+        'energy_at_each_step': energy_at_each_step,
+        'total_measurements_at_each_step': total_measurements_at_each_step,
+        'total_measurements_trend_bai':total_measurements_trend_bai
     }
 
     # Write to CSV
@@ -97,9 +100,9 @@ def get_hf_bitstring(n_qubits, n_electrons):
     return '1' * n_electrons + '0' * (n_qubits - n_electrons)
 
 
-def hf_circuit(n_qubits, n_electrons):
+def hf_circuit(n_qubits, n_electrons, mol='h4'):
     # Prepare Hartree-Fock state using reference state utilities
-    ref_occ = get_occ_no('h4', n_qubits)
+    ref_occ = get_occ_no(mol, n_qubits)
     hf_state = get_reference_state(ref_occ, gs_format='wfs')
 
     # Create circuit and initialize with the HF state
@@ -145,6 +148,7 @@ def fermion_operator_to_qiskit_operator(ferm_op, n_qubits):
     qubit_op = ferm_to_qubit(ferm_op)
     sparse_matrix = get_sparse_operator(qubit_op, n_qubits)
     return Operator(sparse_matrix.toarray())
+
 
 def measure_pauli_expectation(circuit, pauli_op, shots=8192):
     """Measure expectation value of a Pauli operator using shot-based simulation"""
@@ -207,9 +211,9 @@ def measure_expectation(circuit, observable, backend=None, shots=8192):
         # Use shot-based simulation
         return measure_pauli_expectation(circuit, observable, 8192)
 
-def create_ansatz_circuit(n_qubits, n_electrons, operators, parameters):
+def create_ansatz_circuit(n_qubits, n_electrons, operators, parameters, mol='h4'):
     """Create a parameterized ansatz circuit"""
-    circuit = hf_circuit(n_qubits, n_electrons)
+    circuit = hf_circuit(n_qubits, n_electrons, mol=mol)
     for op, theta in zip(operators, parameters):
         # Apply exp(i * theta * op) to the circuit
         # Compute matrix exponential: exp(i * theta * G)
@@ -246,8 +250,8 @@ def compute_gradient_wrapper(args):
     """Wrapper function for multiprocessing gradient computation"""
     current_circuit, H_fermion, generator_fermion, n_qubits, idx = args
     try:
-        print(f"Computing gradient for {idx}")
         grad, total_measurements = compute_commutator_gradient(current_circuit, H_fermion, generator_fermion, n_qubits)
+        print(f"Gradient computed for {idx}: {grad}")
         return idx, np.abs(grad), total_measurements
     except Exception as e:
         print(f"Error computing gradient for operator {idx}: {e}")
@@ -387,7 +391,7 @@ def adapt_vqe_qiskit(H_qubit_op, n_qubits, n_electrons, pool, H_fermion, pool_fe
 
 if __name__ == "__main__":
     # Load H4 Hamiltonian from file
-    with open('../../ham_lib/h4_sto-3g.pkl', 'rb') as f:
+    with open('../../ham_lib/lih_fer.bin', 'rb') as f:
         fermion_op = pickle.load(f)
 
     # Determine n_qubits from Hamiltonian

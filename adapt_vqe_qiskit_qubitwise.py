@@ -25,7 +25,7 @@ from utils.ferm_utils import ferm_to_qubit
 from SolvableQubitHamiltonians.fermi_util import get_commutator
 from Decompositions.qwc_decomposition import qwc_decomposition
 from StatePreparation.reference_state_utils import get_reference_state, get_occ_no
-from adapt_vqe_qiskit import (create_ansatz_circuit, measure_expectation,
+from BestArmIdentification.ADAPTVQE.adapt_vqe_qiskit import (create_ansatz_circuit, measure_expectation,
                               get_statevector, openfermion_qubitop_to_sparsepauliop,
                               fermion_operator_to_qiskit_operator, exact_ground_state_energy, save_results_to_csv)
 
@@ -340,9 +340,9 @@ def compute_commutator_gradient(H_fermion, generator_ferm, fragment_indices, cou
 
 
 
-def adapt_vqe_qiskit(H_qubit_op, n_qubits, n_electrons, pool, H_fermion, pool_fermion, fragment_group_indices_map, commutator_indices_map, max_iter=30, grad_tol=5e-2, verbose=True, use_multiprocessing=True):
+def adapt_vqe_qiskit(H_qubit_op, n_qubits, n_electrons, H_fermion, pool_fermion, fragment_group_indices_map, commutator_indices_map, mol='h4', max_iter=30, grad_tol=2e-2, verbose=True, use_multiprocessing=True):
     """
-    ADAPT-VQE algorithm with multiprocessing support for gradient computation.
+    ADAPTVQE algorithm with multiprocessing support for gradient computation.
 
     Returns:
         tuple: (energies, params, ansatz_ops, final_state, total_measurements)
@@ -355,20 +355,18 @@ def adapt_vqe_qiskit(H_qubit_op, n_qubits, n_electrons, pool, H_fermion, pool_fe
     total_measurements = 0  # Track total measurements throughout the process
 
     final_circuit = create_ansatz_circuit(n_qubits, n_electrons, ansatz_ops,
-                                          params)
+                                          params, mol=mol)
     energy = measure_expectation(final_circuit, H_qubit_op)
     print(f"HF energy (Qiskit): {energy}")
 
     for iteration in range(max_iter):
         # Create current ansatz circuit
         print(f'Iteration {iteration}, Length of Ansatz: {len(ansatz_ops)}, Parameters: {params}')
-        current_circuit = create_ansatz_circuit(n_qubits, n_electrons, ansatz_ops, params)
+        current_circuit = create_ansatz_circuit(n_qubits, n_electrons, ansatz_ops, params, mol=mol)
 
         # Compute gradients for all pool operators using commutator measurement
         grads = []
         shots = 1024
-        if verbose:
-            print(f"Computing gradients for {len(pool)} operators...")
 
         counts_for_each_fragment = get_counts_for_each_fragment(current_circuit, fragment_group_indices_map, shots=shots)
 
@@ -402,8 +400,6 @@ def adapt_vqe_qiskit(H_qubit_op, n_qubits, n_electrons, pool, H_fermion, pool_fe
             # If only one gradient, don't use multiprocessing overhead
             i, grad = _compute_single_gradient(args_list[0])
             grads[i] = grad
-            if verbose:
-                print(f"  Gradient {i+1}/{len(pool)}: {grad:.6e}")
         else:
             # Use multiprocessing for multiple gradients
             try:
@@ -418,7 +414,7 @@ def adapt_vqe_qiskit(H_qubit_op, n_qubits, n_electrons, pool, H_fermion, pool_fe
                     # Print some gradient values for debugging
                     for i, grad in enumerate(grads):
                         if i % 10 == 0:
-                            print(f"  Gradient {i+1}/{len(pool)}: {grad:.6e}")
+                            print(f"  Gradient {i+1}: {grad:.6e}")
 
             except Exception as e:
                 print(f"Gradient multiprocessing failed ({e}), falling back to sequential processing")
@@ -427,7 +423,7 @@ def adapt_vqe_qiskit(H_qubit_op, n_qubits, n_electrons, pool, H_fermion, pool_fe
                     i, grad = _compute_single_gradient(args)
                     grads[i] = grad
                     if verbose and i % 10 == 0:
-                        print(f"  Gradient {i+1}/{len(pool)}: {grad:.6e}")
+                        print(f"  Gradient {i+1}: {grad:.6e}")
 
         max_grad = np.max(grads)
         best_idx = np.argmax(grads)
@@ -437,7 +433,7 @@ def adapt_vqe_qiskit(H_qubit_op, n_qubits, n_electrons, pool, H_fermion, pool_fe
             # Print some gradient values for debugging
             for i, grad in enumerate(grads):
                 if i % 10 == 0:
-                    print(f"  Gradient {i+1}/{len(pool)}: {grad:.6e}")
+                    print(f"  Gradient {i+1}: {grad:.6e}")
 
         if max_grad < grad_tol:
             if verbose:
@@ -445,12 +441,12 @@ def adapt_vqe_qiskit(H_qubit_op, n_qubits, n_electrons, pool, H_fermion, pool_fe
             break
 
         # Add best operator to ansatz
-        ansatz_ops.append(pool[best_idx])
+        ansatz_ops.append(fermion_operator_to_qiskit_operator(uccsd_pool_fermion[best_idx], n_qubits))
         params.append(0.0)
 
                 # Optimize parameters using scipy.optimize.minimize
         def vqe_obj(x):
-            circuit = create_ansatz_circuit(n_qubits, n_electrons, ansatz_ops, x)
+            circuit = create_ansatz_circuit(n_qubits, n_electrons, ansatz_ops, x, mol=mol)
             energy = measure_expectation(circuit, H_qubit_op)
             return energy
 
@@ -473,7 +469,7 @@ def adapt_vqe_qiskit(H_qubit_op, n_qubits, n_electrons, pool, H_fermion, pool_fe
         params = list(res.x)
 
         # Update energy
-        final_circuit = create_ansatz_circuit(n_qubits, n_electrons, ansatz_ops, params)
+        final_circuit = create_ansatz_circuit(n_qubits, n_electrons, ansatz_ops, params, mol=mol)
         energy = measure_expectation(final_circuit, H_qubit_op)
         energies.append(energy)
 
@@ -481,7 +477,7 @@ def adapt_vqe_qiskit(H_qubit_op, n_qubits, n_electrons, pool, H_fermion, pool_fe
             print(f"  Energy after iteration {iteration}: {energy:.8f}")
 
     # Return final state
-    final_circuit = create_ansatz_circuit(n_qubits, n_electrons, ansatz_ops, params)
+    final_circuit = create_ansatz_circuit(n_qubits, n_electrons, ansatz_ops, params, mol=mol)
     final_state = get_statevector(final_circuit)
 
     if verbose:
@@ -492,8 +488,9 @@ def adapt_vqe_qiskit(H_qubit_op, n_qubits, n_electrons, pool, H_fermion, pool_fe
 
 if __name__ == "__main__":
     # Load H4 Hamiltonian from file
-    with open('../../ham_lib/h4_sto-3g.pkl', 'rb') as f:
+    with open('ham_lib/h4_sto-3g.pkl', 'rb') as f:
         fermion_op = pickle.load(f)
+    mol = 'h4'
 
     # Determine n_qubits from Hamiltonian
     qubit_op = ferm_to_qubit(fermion_op)
@@ -508,39 +505,39 @@ if __name__ == "__main__":
     exact_energy, exact_gs = exact_ground_state_energy(H_sparse)
     print(f"Exact ground state energy (diagonalization): {exact_energy:.8f}")
 
-    ref_occ = get_occ_no('h4', n_qubits)
+    ref_occ = get_occ_no(mol, n_qubits)
     hf_state = get_reference_state(ref_occ, gs_format='wfs')
 
 
     # Build UCCSD operator pool and convert to Qiskit Operators
     print(f"Building UCCSD pool for {n_qubits} qubits, {n_electrons} electrons...")
     uccsd_pool_fermion = list(get_all_uccsd_anti_hermitian(n_qubits, n_electrons))
-    pool = [fermion_operator_to_qiskit_operator(op, n_qubits) for op in uccsd_pool_fermion]
-    print(f"UCCSD pool size: {len(pool)}")
+    # pool = [fermion_operator_to_qiskit_operator(op, n_qubits) for op in uccsd_pool_fermion]
+    print(f"UCCSD pool size: {len(uccsd_pool_fermion)}")
 
     # Generate cache filename for commutator maps
-    cache_filename = generate_commutator_cache_filename('h4', n_qubits, n_electrons, len(uccsd_pool_fermion))
+    cache_filename = generate_commutator_cache_filename(mol, n_qubits, n_electrons, len(uccsd_pool_fermion))
 
     # Get commutator maps with caching
     fragment_group_indices_map, commutator_indices_map = get_commutator_maps_cached(
         fermion_op, uccsd_pool_fermion, n_qubits,
-        molecule_name='h4', n_electrons=n_electrons, cache_file=cache_filename)
+        molecule_name=mol, n_electrons=n_electrons, cache_file=cache_filename)
 
     print(f"QWC groups found: {len(fragment_group_indices_map)}")
     print(f"Commutator mappings for {len(commutator_indices_map)} operators")
 
 
-    # Run ADAPT-VQE with commutator gradients (using multiprocessing for gradient calculation)
+    # Run ADAPTVQE with commutator gradients (using multiprocessing for gradient calculation)
 
     # Configuration parameters
     use_parallel = True
     max_workers = None
     executor_type = 'multiprocessing'  # For this version
-    molecule_name = 'h4'
+    molecule_name = mol
 
     energies, params, ansatz, final_state, total_measurements = adapt_vqe_qiskit(
-        H_qubit_op, n_qubits, n_electrons, pool, fermion_op, uccsd_pool_fermion,
-        fragment_group_indices_map, commutator_indices_map)
+        H_qubit_op, n_qubits, n_electrons, fermion_op, uccsd_pool_fermion,
+        fragment_group_indices_map, commutator_indices_map, mol=mol)
 
     # Calculate results
     final_energy = energies[-1]
@@ -552,7 +549,7 @@ if __name__ == "__main__":
     print("Parameters:", params)
     print(f"Ansatz depth: {ansatz_depth}")
     print(f"Total measurements: {total_measurements}")
-    print(f"Fidelity (|<ADAPT-VQE|Exact>|^2): {overlap:.8f}")
+    print(f"Fidelity (|<ADAPTVQE|Exact>|^2): {overlap:.8f}")
 
     # Save results to CSV
     save_results_to_csv(
@@ -563,7 +560,6 @@ if __name__ == "__main__":
         molecule_name=molecule_name,
         n_qubits=n_qubits,
         n_electrons=n_electrons,
-        pool_size=len(pool),
         use_parallel=use_parallel,
         executor_type=executor_type,
         max_workers=max_workers,
