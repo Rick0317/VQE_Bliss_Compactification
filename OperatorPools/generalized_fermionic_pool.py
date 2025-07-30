@@ -1,7 +1,7 @@
 """
 The Generalized Fermionic Pool
 """
-from openfermion import FermionOperator, jordan_wigner, normal_ordered
+from openfermion import FermionOperator, jordan_wigner, normal_ordered, bravyi_kitaev
 
 
 def get_anti_hermitian_one_body(indices: tuple):
@@ -69,13 +69,13 @@ def get_spin_considered_uccsd_anti_hermitian(site: int, n_elec:int):
     for p in range(n_elec, site):
         for q in range(n_elec):
             if p % 2 == q % 2:
-                operator_pool.append(jordan_wigner(normal_ordered(get_anti_hermitian_one_body((p, q)))))
+                operator_pool.append(bravyi_kitaev(normal_ordered(get_anti_hermitian_one_body((p, q)))))
 
 
             for r in range(n_elec, site):
                 for s in range(n_elec):
                     if (p % 2 == q % 2 and r % 2 == s % 2) or (p % 2 == s % 2 and r % 2 == q % 2):
-                        operator_pool.append(jordan_wigner(normal_ordered(get_anti_hermitian_two_body((p, r, s, q)))))
+                        operator_pool.append(bravyi_kitaev(normal_ordered(get_anti_hermitian_two_body((p, r, s, q)))))
 
     return operator_pool
 

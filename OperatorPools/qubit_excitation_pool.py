@@ -1,340 +1,292 @@
 from openfermion import QubitOperator
 import numpy as np
-from itertools import combinations, product
+from itertools import combinations
 
-
-def generate_single_qubit_excitations(n_qubits, pauli_types=['X', 'Y']):
+def create_q_operators(n_qubits):
     """
-    Generate single qubit excitation operators
+    Create Q and Q^dagger operators for all qubits
+    Q_i = (X_i + iY_i)/2 (annihilation-like)
+    Q_i^dagger = (X_i - iY_i)/2 (creation-like)
+    
     :param n_qubits: Number of qubits
-    :param pauli_types: Types of Pauli operators to include
-    :return: List of QubitOperator objects
+    :return: (q_ops, q_dag_ops) - lists of QubitOperator objects
     """
-    single_excitations = []
+    q_ops = []
+    q_dag_ops = []
     
-    for qubit in range(n_qubits):
-        for pauli in pauli_types:
-            # Create single Pauli operator on this qubit
-            op = QubitOperator(f'{pauli}{qubit}')
-            single_excitations.append({
-                'operator': op,
-                'type': 'single',
-                'qubits': [qubit],
-                'pauli_pattern': pauli,
-                'description': f'{pauli} on qubit {qubit}'
-            })
-    
-    return single_excitations
-
-
-def generate_two_qubit_excitations(n_qubits, pauli_types=['X', 'Y'], include_mixed=True):
-    """
-    Generate two-qubit excitation operators
-    :param n_qubits: Number of qubits
-    :param pauli_types: Types of Pauli operators to include
-    :param include_mixed: Whether to include mixed Pauli patterns (XY, YX)
-    :return: List of QubitOperator objects
-    """
-    two_excitations = []
-    
-    # Generate all unique pairs of qubits
-    for q1, q2 in combinations(range(n_qubits), 2):
-        # Same Pauli operators (XX, YY)
-        for pauli in pauli_types:
-            op = QubitOperator(f'{pauli}{q1} {pauli}{q2}')
-            two_excitations.append({
-                'operator': op,
-                'type': 'double_same',
-                'qubits': [q1, q2],
-                'pauli_pattern': f'{pauli}{pauli}',
-                'description': f'{pauli}{pauli} on qubits {q1},{q2}'
-            })
+    for i in range(n_qubits):
+        # Q_i = (X_i + iY_i)/2
+        q_i = QubitOperator(f'X{i}', 0.5) + QubitOperator(f'Y{i}', 0.5j)
+        q_ops.append(q_i)
         
-        # Mixed Pauli operators (XY, YX) if requested
-        if include_mixed and len(pauli_types) >= 2:
-            for pauli1, pauli2 in product(pauli_types, repeat=2):
-                if pauli1 != pauli2:  # Only mixed patterns
-                    op = QubitOperator(f'{pauli1}{q1} {pauli2}{q2}')
-                    two_excitations.append({
-                        'operator': op,
-                        'type': 'double_mixed',
-                        'qubits': [q1, q2],
-                        'pauli_pattern': f'{pauli1}{pauli2}',
-                        'description': f'{pauli1}{pauli2} on qubits {q1},{q2}'
+        # Q_i^dagger = (X_i - iY_i)/2
+        q_i_dag = QubitOperator(f'X{i}', 0.5) + QubitOperator(f'Y{i}', -0.5j)
+        q_dag_ops.append(q_i_dag)
+    
+    return q_ops, q_dag_ops
+
+
+def generate_single_excitation_generators(n_qubits, n_electrons, q_ops, q_dag_ops):
+    """
+    Generate single excitation generators: T_ai = Q_a^dagger * Q_i - Q_i^dagger * Q_a
+    where a is virtual (unoccupied), i is occupied
+    
+    :param n_qubits: Number of qubits (orbitals)
+    :param n_electrons: Number of electrons
+    :param q_ops: List of Q operators
+    :param q_dag_ops: List of Q^dagger operators
+    :return: List of QubitOperator generators
+    """
+    single_generators = []
+    
+    # Occupied orbitals: 0 to n_electrons-1
+    # Virtual orbitals: n_electrons to n_qubits-1
+    occupied = list(range(n_electrons))
+    virtual = list(range(n_electrons, n_qubits))
+    
+    for a in virtual:      # virtual orbital (unoccupied)
+        for i in occupied:  # occupied orbital
+            # Check spin symmetry: only allow same-spin excitations or spin-flips
+            a_spin = a % 2  # 0 for even (alpha), 1 for odd (beta)
+            i_spin = i % 2  # 0 for even (alpha), 1 for odd (beta)
+            
+            # Allow same-spin excitations and spin-flip excitations
+            if True:  # For now, allow all excitations - can be restricted later
+                # T_ai = Q_a^dagger * Q_i - Q_i^dagger * Q_a
+                term1 = q_dag_ops[a] * q_ops[i]  # Create in virtual, annihilate in occupied
+                term2 = q_dag_ops[i] * q_ops[a]  # Hermitian conjugate
+                generator = term1 - term2
+                
+                # Only keep non-zero generators
+                if generator.terms:  # Check if dictionary is non-empty
+                    spin_type = "same-spin" if a_spin == i_spin else "spin-flip"
+                    single_generators.append({
+                        'operator': generator,
+                        'type': 'single_excitation',
+                        'indices': (a, i),  # (virtual, occupied)
+                        'spin_type': spin_type,
+                        'description': f'T_{a}{i}: Q_{a}^dag * Q_{i} - Q_{i}^dag * Q_{a} ({spin_type})'
                     })
     
-    return two_excitations
+    return single_generators
 
 
-def generate_three_qubit_excitations(n_qubits, pauli_types=['X', 'Y'], max_operators=50):
+def generate_double_excitation_generators(n_qubits, n_electrons, q_ops, q_dag_ops, max_doubles=None):
     """
-    Generate selected three-qubit excitation operators
-    :param n_qubits: Number of qubits
-    :param pauli_types: Types of Pauli operators to include
-    :param max_operators: Maximum number of three-qubit operators to generate
-    :return: List of QubitOperator objects
+    Generate double excitation generators: T_abij = Q_a^dagger * Q_b^dagger * Q_i * Q_j - Q_i^dagger * Q_j^dagger * Q_a * Q_b
+    where a,b are virtual (unoccupied), i,j are occupied
+    
+    :param n_qubits: Number of qubits (orbitals)
+    :param n_electrons: Number of electrons
+    :param q_ops: List of Q operators
+    :param q_dag_ops: List of Q^dagger operators
+    :param max_doubles: Maximum number of double excitations to generate (None for all)
+    :return: List of QubitOperator generators
     """
-    three_excitations = []
+    double_generators = []
     count = 0
     
-    # Generate all unique triplets of qubits
-    for q1, q2, q3 in combinations(range(n_qubits), 3):
-        if count >= max_operators:
-            break
-            
-        # Same Pauli operators (XXX, YYY)
-        for pauli in pauli_types:
-            if count >= max_operators:
-                break
-            op = QubitOperator(f'{pauli}{q1} {pauli}{q2} {pauli}{q3}')
-            three_excitations.append({
-                'operator': op,
-                'type': 'triple_same',
-                'qubits': [q1, q2, q3],
-                'pauli_pattern': f'{pauli}{pauli}{pauli}',
-                'description': f'{pauli}{pauli}{pauli} on qubits {q1},{q2},{q3}'
-            })
-            count += 1
+    # Occupied orbitals: 0 to n_electrons-1
+    # Virtual orbitals: n_electrons to n_qubits-1
+    occupied = list(range(n_electrons))
+    virtual = list(range(n_electrons, n_qubits))
     
-    return three_excitations
+    # Generate combinations of virtual pairs (a,b) and occupied pairs (i,j)
+    for a in virtual:
+        for b in virtual:
+            if a >= b:  # Avoid double counting and same-index pairs
+                continue
+            for i in occupied:
+                for j in occupied:
+                    if i >= j:  # Avoid double counting and same-index pairs
+                        continue
+                    
+                    if max_doubles and count >= max_doubles:
+                        return double_generators
+                    
+                    # Check spin conservation
+                    # For now, allow all combinations - can add more restrictions later
+                    a_spin, b_spin = a % 2, b % 2
+                    i_spin, j_spin = i % 2, j % 2
+                    
+                    # Determine excitation type based on spin patterns
+                    if (a_spin, b_spin) == (i_spin, j_spin):
+                        spin_type = "same-spin-pair"
+                    elif set([a_spin, b_spin]) == set([i_spin, j_spin]):
+                        spin_type = "mixed-spin"
+                    else:
+                        spin_type = "other"
+                    
+                    # T_abij = Q_a^dagger * Q_b^dagger * Q_i * Q_j - Q_i^dagger * Q_j^dagger * Q_a * Q_b
+                    term1 = q_dag_ops[a] * q_dag_ops[b] * q_ops[i] * q_ops[j]  # Create in virtual, annihilate in occupied
+                    term2 = q_dag_ops[i] * q_dag_ops[j] * q_ops[a] * q_ops[b]  # Hermitian conjugate
+                    generator = term1 - term2
+                    
+                    # Only keep non-zero generators
+                    if generator.terms:  # Check if dictionary is non-empty
+                        double_generators.append({
+                            'operator': generator,
+                            'type': 'double_excitation',
+                            'indices': (a, b, i, j),  # (virtual1, virtual2, occupied1, occupied2)
+                            'spin_type': spin_type,
+                            'description': f'T_{a}{b}{i}{j}: Q_{a}^dag * Q_{b}^dag * Q_{i} * Q_{j} - Q_{i}^dag * Q_{j}^dag * Q_{a} * Q_{b} ({spin_type})'
+                        })
+                        count += 1
+    
+    return double_generators
 
 
-def generate_nearest_neighbor_excitations(n_qubits, pauli_types=['X', 'Y']):
+def generate_correct_qubit_excitation_pool(n_qubits, n_electrons, include_singles=True, include_doubles=True, max_doubles=None):
     """
-    Generate excitation operators only between nearest neighbor qubits
-    :param n_qubits: Number of qubits
-    :param pauli_types: Types of Pauli operators to include
-    :return: List of QubitOperator objects
+    Generate the correct qubit excitation pool based on Q and Q^dagger operators
+    
+    :param n_qubits: Number of qubits (orbitals)
+    :param n_electrons: Number of electrons
+    :param include_singles: Whether to include single excitations
+    :param include_doubles: Whether to include double excitations  
+    :param max_doubles: Maximum number of double excitations (None for all)
+    :return: List of generator dictionaries
     """
-    nn_excitations = []
+    print(f"Generating correct qubit excitation pool for {n_qubits} qubits, {n_electrons} electrons...")
+    print(f"Occupied orbitals: 0-{n_electrons-1}, Virtual orbitals: {n_electrons}-{n_qubits-1}")
     
-    # Adjacent pairs only
-    for q in range(n_qubits - 1):
-        q1, q2 = q, q + 1
-        
-        # Same Pauli operators
-        for pauli in pauli_types:
-            op = QubitOperator(f'{pauli}{q1} {pauli}{q2}')
-            nn_excitations.append({
-                'operator': op,
-                'type': 'nearest_neighbor',
-                'qubits': [q1, q2],
-                'pauli_pattern': f'{pauli}{pauli}',
-                'description': f'{pauli}{pauli} on adjacent qubits {q1},{q2}'
-            })
-        
-        # Mixed Pauli operators
-        if len(pauli_types) >= 2:
-            for pauli1, pauli2 in product(pauli_types, repeat=2):
-                if pauli1 != pauli2:
-                    op = QubitOperator(f'{pauli1}{q1} {pauli2}{q2}')
-                    nn_excitations.append({
-                        'operator': op,
-                        'type': 'nearest_neighbor_mixed',
-                        'qubits': [q1, q2],
-                        'pauli_pattern': f'{pauli1}{pauli2}',
-                        'description': f'{pauli1}{pauli2} on adjacent qubits {q1},{q2}'
-                    })
-    
-    return nn_excitations
-
-
-def generate_spin_flip_excitations(n_qubits):
-    """
-    Generate spin-flip excitation operators (X operators)
-    :param n_qubits: Number of qubits
-    :return: List of QubitOperator objects
-    """
-    spin_flips = []
-    
-    # Single spin flips
-    for q in range(n_qubits):
-        op = QubitOperator(f'X{q}')
-        spin_flips.append({
-            'operator': op,
-            'type': 'spin_flip_single',
-            'qubits': [q],
-            'pauli_pattern': 'X',
-            'description': f'Spin flip on qubit {q}'
-        })
-    
-    # Two-qubit spin flips (XX)
-    for q1, q2 in combinations(range(n_qubits), 2):
-        op = QubitOperator(f'X{q1} X{q2}')
-        spin_flips.append({
-            'operator': op,
-            'type': 'spin_flip_double',
-            'qubits': [q1, q2],
-            'pauli_pattern': 'XX',
-            'description': f'Double spin flip on qubits {q1},{q2}'
-        })
-    
-    return spin_flips
-
-
-def generate_qubit_excitation_pool(n_qubits, pool_type='full', **kwargs):
-    """
-    Generate a qubit excitation pool based on the specified type
-    
-    :param n_qubits: Number of qubits
-    :param pool_type: Type of pool to generate
-        - 'full': Single and double excitations with X,Y
-        - 'singles_only': Only single qubit excitations  
-        - 'nearest_neighbor': Only nearest neighbor interactions
-        - 'spin_flip': Only X operators (spin flips)
-        - 'custom': Custom configuration via kwargs
-    :param kwargs: Additional parameters for custom pool generation
-    :return: List of QubitOperator dictionaries
-    """
+    # Create Q and Q^dagger operators
+    q_ops, q_dag_ops = create_q_operators(n_qubits)
     
     pool = []
     
-    if pool_type == 'full':
-        # Generate comprehensive pool with singles and doubles
-        singles = generate_single_qubit_excitations(n_qubits, ['X', 'Y'])
-        doubles = generate_two_qubit_excitations(n_qubits, ['X', 'Y'], include_mixed=True)
+    if include_singles:
+        print("Generating single excitation generators...")
+        singles = generate_single_excitation_generators(n_qubits, n_electrons, q_ops, q_dag_ops)
         pool.extend(singles)
-        pool.extend(doubles)
-        
-    elif pool_type == 'singles_only':
-        # Only single qubit excitations
-        pauli_types = kwargs.get('pauli_types', ['X', 'Y'])
-        singles = generate_single_qubit_excitations(n_qubits, pauli_types)
-        pool.extend(singles)
-        
-    elif pool_type == 'nearest_neighbor':
-        # Only nearest neighbor interactions
-        pauli_types = kwargs.get('pauli_types', ['X', 'Y'])
-        nn_ops = generate_nearest_neighbor_excitations(n_qubits, pauli_types)
-        pool.extend(nn_ops)
-        
-    elif pool_type == 'spin_flip':
-        # Only spin flip operators (X)
-        spin_flips = generate_spin_flip_excitations(n_qubits)
-        pool.extend(spin_flips)
-        
-    elif pool_type == 'custom':
-        # Custom pool based on kwargs
-        include_singles = kwargs.get('include_singles', True)
-        include_doubles = kwargs.get('include_doubles', True)
-        include_triples = kwargs.get('include_triples', False)
-        pauli_types = kwargs.get('pauli_types', ['X', 'Y'])
-        include_mixed = kwargs.get('include_mixed', True)
-        max_triple_ops = kwargs.get('max_triple_ops', 50)
-        
-        if include_singles:
-            singles = generate_single_qubit_excitations(n_qubits, pauli_types)
-            pool.extend(singles)
-            
-        if include_doubles:
-            doubles = generate_two_qubit_excitations(n_qubits, pauli_types, include_mixed)
-            pool.extend(doubles)
-            
-        if include_triples:
-            triples = generate_three_qubit_excitations(n_qubits, pauli_types, max_triple_ops)
-            pool.extend(triples)
+        print(f"Generated {len(singles)} single excitation generators")
     
-    else:
-        raise ValueError(f"Unknown pool_type: {pool_type}")
+    if include_doubles:
+        print("Generating double excitation generators...")
+        doubles = generate_double_excitation_generators(n_qubits, n_electrons, q_ops, q_dag_ops, max_doubles)
+        pool.extend(doubles)
+        print(f"Generated {len(doubles)} double excitation generators")
     
     # Add metadata
     for i, op_dict in enumerate(pool):
         op_dict['pool_index'] = i
-        op_dict['pool_type'] = pool_type
-        
-    print(f"Generated qubit excitation pool with {len(pool)} operators (type: {pool_type})")
+        op_dict['pool_type'] = 'qubit_excitation'
     
+    print(f"Total generators in pool: {len(pool)}")
     return pool
 
 
-def get_qubit_excitation_operators_only(n_qubits, pool_type='full', **kwargs):
+def get_correct_qubit_excitation_operators_only(n_qubits, n_electrons, include_singles=True, include_doubles=True, max_doubles=None):
     """
     Simplified version that returns only the QubitOperator objects
-    :param n_qubits: Number of qubits
-    :param pool_type: Type of pool to generate
+    
+    :param n_qubits: Number of qubits (orbitals)
+    :param n_electrons: Number of electrons
+    :param include_singles: Whether to include single excitations
+    :param include_doubles: Whether to include double excitations
+    :param max_doubles: Maximum number of double excitations
     :return: List of QubitOperator objects
     """
-    full_pool = generate_qubit_excitation_pool(n_qubits, pool_type, **kwargs)
-    return [item['operator'] for item in full_pool]
+    pool = generate_correct_qubit_excitation_pool(n_qubits, n_electrons, include_singles, include_doubles, max_doubles)
+    return [item['operator'] for item in pool]
 
 
-def analyze_qubit_excitation_pool(pool):
+def analyze_correct_qubit_pool(pool):
     """
-    Analyze the composition of the qubit excitation pool
-    :param pool: List of operator dictionaries
+    Analyze the composition of the correct qubit excitation pool
     """
     if not pool:
         print("Empty pool!")
         return
     
-    print(f"\n=== QUBIT EXCITATION POOL ANALYSIS ===")
-    print(f"Total operators: {len(pool)}")
+    print(f"\n=== CORRECT QUBIT EXCITATION POOL ANALYSIS ===")
+    print(f"Total generators: {len(pool)}")
     
     # Count by type
     type_counts = {}
+    spin_type_counts = {}
     for op_dict in pool:
         op_type = op_dict['type']
         type_counts[op_type] = type_counts.get(op_type, 0) + 1
+        
+        if 'spin_type' in op_dict:
+            spin_type = op_dict['spin_type']
+            spin_type_counts[spin_type] = spin_type_counts.get(spin_type, 0) + 1
     
-    print(f"\nOperator types:")
+    print(f"\nGenerator types:")
     for op_type, count in sorted(type_counts.items()):
         print(f"  {op_type}: {count}")
     
-    # Count by Pauli pattern
-    pauli_counts = {}
-    for op_dict in pool:
-        pattern = op_dict['pauli_pattern']
-        pauli_counts[pattern] = pauli_counts.get(pattern, 0) + 1
+    if spin_type_counts:
+        print(f"\nSpin types:")
+        for spin_type, count in sorted(spin_type_counts.items()):
+            print(f"  {spin_type}: {count}")
     
-    print(f"\nPauli patterns:")
-    for pattern, count in sorted(pauli_counts.items()):
-        print(f"  {pattern}: {count}")
+    # Analyze term complexity
+    term_counts = {}
+    for op_dict in pool:
+        num_terms = len(op_dict['operator'].terms)
+        term_counts[num_terms] = term_counts.get(num_terms, 0) + 1
+    
+    print(f"\nNumber of Pauli terms per generator:")
+    for num_terms, count in sorted(term_counts.items()):
+        print(f"  {num_terms} terms: {count} generators")
     
     # Show examples
-    print(f"\nExample operators:")
-    for i, op_dict in enumerate(pool[:5]):
+    print(f"\nExample generators:")
+    for i, op_dict in enumerate(pool[:3]):
         print(f"  {i+1}. {op_dict['description']}")
-    
-    # Show qubit usage statistics
-    qubit_usage = {}
-    for op_dict in pool:
-        for qubit in op_dict['qubits']:
-            qubit_usage[qubit] = qubit_usage.get(qubit, 0) + 1
-    
-    if qubit_usage:
-        print(f"\nQubit usage (how many operators act on each qubit):")
-        for qubit in sorted(qubit_usage.keys()):
-            print(f"  Qubit {qubit}: {qubit_usage[qubit]} operators")
+        print(f"     Terms: {len(op_dict['operator'].terms)}")
+        # Show first few terms
+        terms = list(op_dict['operator'].terms.items())
+        for j, (pauli_string, coeff) in enumerate(terms[:3]):
+            pauli_str = ' '.join([f"{op}{qubit}" for qubit, op in pauli_string]) if pauli_string else "I"
+            print(f"       {coeff:.3f} * {pauli_str}")
+        if len(terms) > 3:
+            print(f"       ... and {len(terms)-3} more terms")
+        print()
 
 
-# Example usage and test function
 if __name__ == "__main__":
-    print("Testing qubit excitation pool generation...")
+    print("Testing correct qubit excitation pool generation...")
     
-    # Test different pool types
-    test_cases = [
-        ("Full pool (4 qubits)", 4, 'full'),
-        ("Singles only (6 qubits)", 6, 'singles_only'),
-        ("Nearest neighbor (4 qubits)", 4, 'nearest_neighbor'),
-        ("Spin flip (4 qubits)", 4, 'spin_flip'),
-    ]
-    
-    for description, n_qubits, pool_type in test_cases:
-        print(f"\n{'='*60}")
-        print(f"Testing: {description}")
-        pool = generate_qubit_excitation_pool(n_qubits, pool_type)
-        analyze_qubit_excitation_pool(pool)
-    
-    # Test custom pool
+    # Test with small system (H2: 4 qubits, 2 electrons)
+    n_qubits = 4
+    n_electrons = 2
     print(f"\n{'='*60}")
-    print("Testing custom pool (6 qubits, with triples)")
-    custom_pool = generate_qubit_excitation_pool(
-        6, 'custom',
-        include_singles=True,
+    print(f"Testing with {n_qubits} qubits, {n_electrons} electrons (like H2)")
+    
+    # Generate pool with both singles and doubles (limited)
+    pool = generate_correct_qubit_excitation_pool(
+        n_qubits, n_electrons,
+        include_singles=True, 
         include_doubles=True, 
-        include_triples=True,
-        pauli_types=['X', 'Y'],
-        include_mixed=False,  # Only XX, YY (no XY, YX)
-        max_triple_ops=20
+        max_doubles=20
     )
-    analyze_qubit_excitation_pool(custom_pool) 
+    
+    analyze_correct_qubit_pool(pool)
+    
+    # Test with larger system, singles only (6 qubits, 4 electrons)
+    print(f"\n{'='*60}")
+    print("Testing singles only with 6 qubits, 4 electrons")
+    
+    pool_singles = generate_correct_qubit_excitation_pool(
+        6, 4,
+        include_singles=True, 
+        include_doubles=False
+    )
+    
+    analyze_correct_qubit_pool(pool_singles)
+    
+    # Test with H4 system (8 qubits, 4 electrons)
+    print(f"\n{'='*60}")
+    print("Testing H4 system: 8 qubits, 4 electrons")
+    
+    pool_h4 = generate_correct_qubit_excitation_pool(
+        8, 4,
+        include_singles=True, 
+        include_doubles=True, 
+        max_doubles=50
+    )
+    
+    analyze_correct_qubit_pool(pool_h4) 

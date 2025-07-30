@@ -1,4 +1,4 @@
-from openfermion import FermionOperator, jordan_wigner, QubitOperator
+from openfermion import FermionOperator, bravyi_kitaev, QubitOperator
 
 def get_anti_hermitian_one_body(indices: tuple):
     """
@@ -86,8 +86,8 @@ def get_qubit_adapt_pool(site: int, n_elec: int):
     # Transform to qubit operators and filter
     total_qubit_ops = 0
     for op_type, indices, ferm_op in fermion_operators:
-        # Transform to qubit operator using Jordan-Wigner
-        qubit_op = jordan_wigner(ferm_op)
+        # Transform to qubit operator using Bravyi Kitaev
+        qubit_op = bravyi_kitaev(ferm_op)
 
         # Remove Z-only strings and get individual Pauli strings
         filtered_ops = remove_z_strings(qubit_op)

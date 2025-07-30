@@ -70,7 +70,7 @@ def does_diagonalize(group_op, key_unitary):
     return True
 
 
-def get_diagonalizing_pauli(group_op):
+def get_diagonalizing_pauli(group_op, n_qubits):
     """
     Given a QWC group operator, find the diagonalizing Pauli String that diagonalizes all the Pauli Strings in group_op
     :param group_op: SparsePauliOp representing a QWC group
@@ -80,9 +80,6 @@ def get_diagonalizing_pauli(group_op):
     pauli_list = group_op.to_list()
     if not pauli_list:
         return 'I'  # Empty group
-
-    # Get the length of Pauli strings (number of qubits)
-    n_qubits = len(pauli_list[0][0])
 
     # Initialize diagonalizing string with all identities
     diagonalizing_pauli = ['I'] * n_qubits
@@ -208,7 +205,7 @@ def get_qubit_w_commutation_group_parallel(H_qubit_op, generator_pool, n_qubits,
             for group_pauli_list in groups_data:
                 # Fast pre-filtering: get diagonalizing pauli first (cheaper)
                 group_op = SparsePauliOp.from_list(group_pauli_list)
-                diagonalizing_pauli = get_diagonalizing_pauli(group_op)
+                diagonalizing_pauli = get_diagonalizing_pauli(group_op, n_qubits)
 
                 # Fast check: exact match first (most common case)
                 if diagonalizing_pauli in fragment_group_indices_map:
@@ -498,7 +495,9 @@ def bai_find_the_best_arm(current_circuit, H_qubit_op, generator_pool, fragment_
     print(f"Number of active QWC groups: {len(active_qwc_groups)}")
 
     while len(active_arms) > 1 and rounds < max_rounds:
-        gc.collect()
+        # More aggressive garbage collection for large systems
+        if len(active_qwc_groups) > 5000:
+            gc.collect()
         rounds += 1
         print(f"Round {rounds}")
         shots = 1024
@@ -522,10 +521,19 @@ def bai_find_the_best_arm(current_circuit, H_qubit_op, generator_pool, fragment_
                 for i in active_arms
             ]
 
-            # Use multiprocessing for parallel gradient computation
-            num_processes = min(cpu_count() - 4, len(active_arms))
+            # Use multiprocessing for parallel gradient computation - scale with system size
+            # Limit processes more aggressively for very large systems to avoid memory issues
+            if len(active_qwc_groups) > 10000:
+                max_processes = min(4, len(active_arms))
+            elif len(active_qwc_groups) > 1000:
+                max_processes = min(cpu_count() - 2, len(active_arms))
+            else:
+                max_processes = min(cpu_count() - 4, len(active_arms))
+
+            num_processes = max_processes
 
             try:
+                print(f"  Starting parallel gradient computation for {len(active_arms)} arms using {num_processes} processes...")
                 with Pool(num_processes) as p:
                     gradient_results = p.map(_compute_single_gradient_bai, args_list)
 
@@ -534,7 +542,7 @@ def bai_find_the_best_arm(current_circuit, H_qubit_op, generator_pool, fragment_
                     estimates[arm_index] = (estimates[arm_index] * (total_shots - shots) + reward * shots) / total_shots
                     pulls[arm_index] += shots
 
-                print(f"  Computed gradients for {len(active_arms)} arms in parallel")
+                print(f"  Completed gradient computation for {len(active_arms)} arms")
 
             except Exception as e:
                 print(f"Parallel gradient computation failed ({e}), falling back to sequential")
@@ -559,7 +567,7 @@ def bai_find_the_best_arm(current_circuit, H_qubit_op, generator_pool, fragment_
         max_mean = max(abs(means[active_arms]))
 
         radius = np.sqrt(
-            np.log(0.0001 * len(active_arms) * (pulls ** 2) / (delta * 10 * (iteration + 1))) / pulls)
+            np.log(0.0001 * len(active_arms) * (pulls ** 2) / (delta * 100 * (iteration + 1))) / pulls)
 
         new_active_arms = []
         new_active_qwc_groups = set()
@@ -576,12 +584,14 @@ def bai_find_the_best_arm(current_circuit, H_qubit_op, generator_pool, fragment_
         active_qwc_groups = new_active_qwc_groups
 
         print(f"After round {rounds}, active_arms: {active_arms}")
+        print(f"After round {rounds}, means: {means}")
         print(f"After round {rounds}, number of fragments: {len(active_qwc_groups)}")
         gc.collect()
 
     means = estimates
-    print(f"Active arms: {active_arms}")
+    print(f"Final BAI result: {len(active_arms)} active arms remaining after {rounds} rounds")
     best_arm = max(np.array(active_arms), key=lambda i: abs(means[i]))
+    print(f"Selected best arm {best_arm} with gradient magnitude {abs(means[best_arm]):.6e}")
     return abs(means[best_arm]), best_arm, total_measurements_across_fragments, measurements_trend_bai
 
 
@@ -625,10 +635,6 @@ def adapt_vqe_qiskit(H_sparse_pauli_op, n_qubits, n_electrons, H_qubit_op, gener
 
         if verbose:
             print(f"Iteration {iteration}: max gradient = {max_grad:.6e}, best = {best_idx}")
-            # Print some gradient values for debugging
-            for i, grad in enumerate(grads):
-                if i % 10 == 0:
-                    print(f"  Gradient {i+1}: {grad:.6e}")
 
         if max_grad < grad_tol:
             if verbose:
@@ -645,21 +651,31 @@ def adapt_vqe_qiskit(H_sparse_pauli_op, n_qubits, n_electrons, H_qubit_op, gener
             energy = measure_expectation(circuit, H_sparse_pauli_op)
             return energy
 
-        # Debug: Test objective function at a few points
-        if verbose and iteration == 0:
-            print(f"  Testing objective function:")
-            test_params = [0.0, -0.05, -0.08, -0.1, 0.05, 0.1]
-            for test_val in test_params:
-                test_energy = vqe_obj([test_val])
-                print(f"    θ = {test_val:6.3f}: E = {test_energy:.8f}")
+        # Minimal debugging for first iteration only
+        if verbose and iteration == 0 and len(ansatz_ops) == 1:
+            print(f"  Testing objective function at θ=0: E = {vqe_obj([0.0]):.8f}")
 
         # Try optimization with different methods and starting points
         initial_guess = params.copy()
         print(f"  Starting optimization from: {initial_guess}")
 
-        # Use a more robust optimization strategy
+        # Use faster optimization with fewer function evaluations for large systems
+        max_iter = 50 if len(ansatz_ops) > 5 else 100
+        if len(ansatz_ops) == 1:
+            # For single parameter, try simple line search first
+            test_params = [-0.1, -0.05, 0.0, 0.05, 0.1]
+            best_energy = float('inf')
+            best_param = 0.0
+            for test_val in test_params:
+                energy = vqe_obj([test_val])
+                if energy < best_energy:
+                    best_energy = energy
+                    best_param = test_val
+            initial_guess = [best_param]
+
+        # Use faster optimization method
         res = minimize(vqe_obj, initial_guess, method='COBYLA',
-                      options={'maxiter': 200, 'disp': False})
+                      options={'maxiter': max_iter, 'disp': False, 'rhobeg': 0.1})
 
         params = list(res.x)
 
