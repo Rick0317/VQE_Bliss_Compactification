@@ -9,7 +9,7 @@ import pickle
 import os
 import sys
 import numpy as np
-from multiprocessing import Pool, cpu_count
+from multiprocessing import Pool, cpu_count, get_context
 from functools import partial
 import csv
 from datetime import datetime
@@ -335,20 +335,54 @@ def get_commutator_maps_cached(H_qubit_op, generator_pool, n_qubits, molecule_na
 
     return fragment_map, commutator_map
 
+def build_measurement_circuit_with_args(args):
+    current_circuit, pauli_string, fragment_index, n_qubits = args
+    print(f"Building measurement circuit for {fragment_index}")
+
+    meas_circuit = QuantumCircuit(n_qubits, n_qubits)
+    meas_circuit.compose(current_circuit, inplace=True)
+
+    for i, pauli in enumerate(pauli_string):
+        qubit_idx = n_qubits - 1 - i
+        if pauli == 'X':
+            meas_circuit.ry(-np.pi / 2, qubit_idx)
+        elif pauli == 'Y':
+            meas_circuit.rx(np.pi / 2, qubit_idx)
+
+    meas_circuit.measure_all(inplace=True)
+    return (fragment_index, meas_circuit)
+
+
+def build_all_circuits_parallel(current_circuit, fragment_group_indices_map, active_qwc_groups, n_qubits):
+    # Prepare argument list
+    args_list = [
+        (current_circuit, pauli_string, fragment_index, n_qubits)
+        for pauli_string, fragment_index in fragment_group_indices_map.items()
+        if fragment_index in active_qwc_groups
+    ]
+
+    with get_context("spawn").Pool(processes=min(cpu_count() - 2, len(args_list))) as pool:
+        results = pool.map(build_measurement_circuit_with_args, args_list)
+
+    # Separate outputs
+    fragment_indices = [frag_idx for frag_idx, _ in results]
+    circuits = [circuit for _, circuit in results]
+
+    return fragment_indices, circuits
+
 
 def _measure_single_fragment(args):
     """Worker function for parallel measurement of a single fragment"""
-    current_circuit, pauli_string, fragment_index, shots = args
+    current_circuit, pauli_string, fragment_index, n_qubits, shots, simulator, = args
 
     try:
-        gc.collect()
+        print(f"Measuring fragment {fragment_index}")
         # Create measurement circuit
-        meas_circuit = current_circuit.copy()
-        meas_circuit.add_register(ClassicalRegister(len(pauli_string), 'c'))
+        meas_circuit = QuantumCircuit(n_qubits, n_qubits)
+        meas_circuit.compose(current_circuit, inplace=True)
 
         # Apply basis rotations for measurement
         # Note: Qiskit Pauli strings use reverse indexing (leftmost = highest qubit)
-        n_qubits = len(pauli_string)
         for i, pauli in enumerate(pauli_string):
             qubit_idx = n_qubits - 1 - i  # Reverse the qubit indexing
             if pauli == 'X':
@@ -357,19 +391,14 @@ def _measure_single_fragment(args):
                 meas_circuit.rx(np.pi / 2, qubit_idx)
             # Z measurement requires no rotation
 
-        # Add measurements
-        for i in range(len(pauli_string)):
-            meas_circuit.measure(i, i)
+        meas_circuit.measure_all(inplace=True)
 
-        gc.collect()
         # Run simulation
-        simulator = AerSimulator()
-        compiled_circuit = transpile(meas_circuit, simulator, optimization_level=3)
-        result = simulator.run(compiled_circuit, shots=shots).result()
-        counts = result.get_counts()
-        del meas_circuit, compiled_circuit, result
-        gc.collect()
+        compiled = transpile(meas_circuit, simulator, optimization_level=1)
 
+        result = simulator.run(compiled, shots=shots).result()
+        counts = result.get_counts()
+        del meas_circuit, compiled, result
         return fragment_index, counts
 
     except Exception as e:
@@ -377,50 +406,47 @@ def _measure_single_fragment(args):
         return fragment_index, {}
 
 
-def get_counts_for_each_fragment(current_circuit, fragment_group_indices_map, active_qwc_groups, shots=8192):
+def get_counts_for_each_fragment_batched(current_circuit, fragment_group_indices_map, active_qwc_groups, n_qubits, shots=8192, batch_size=200):
     """
-    Compute the distribution of the wavefunction from the current circuit (parallelized version)
-    :param current_circuit: The present form of the parametrized circuit
-    :param fragment_group_indices_map: The map of each QWC to indices
-    :param active_qwc_groups: The active QWC groups to be measured.
-    :param shots: The number of measurements
-    :return: {1: {counts data}, 2: {counts data}, ... }
+    Batched construction + simulation to keep memory usage low.
     """
-    # Prepare arguments for parallel execution
+    simulator = AerSimulator()
+
+    # Prepare full args list
     args_list = [
-        (current_circuit, pauli_string, fragment_index, shots)
+        (current_circuit, pauli_string, fragment_index, n_qubits)
         for pauli_string, fragment_index in fragment_group_indices_map.items()
         if fragment_index in active_qwc_groups
     ]
 
-    # Use multiprocessing to parallelize measurements
-    num_processes = 20 # min(cpu_count(), len(args_list))
-
+    total = len(args_list)
     counts_for_each_fragment = {}
 
-    if len(args_list) == 1:
-        # If only one fragment, don't use multiprocessing overhead
-        fragment_index, counts = _measure_single_fragment(args_list[0])
-        counts_for_each_fragment[fragment_index] = counts
-    else:
-        # Use multiprocessing for multiple fragments
-        try:
-            with Pool(num_processes) as p:
-                results = p.map(_measure_single_fragment, args_list)
+    for start in range(0, total, batch_size):
+        end = min(start + batch_size, total)
+        batch_args = args_list[start:end]
+        print(f"\n🔁 Processing batch {start}–{end - 1} ({len(batch_args)} circuits)")
 
-            # Collect results
-            for fragment_index, counts in results:
-                counts_for_each_fragment[fragment_index] = counts
+        # Build circuits in parallel
+        with get_context("spawn").Pool(processes=min(cpu_count() - 2, len(batch_args))) as pool:
+            results = pool.map(build_measurement_circuit_with_args, batch_args)
 
-        except Exception as e:
-            print(f"Multiprocessing failed ({e}), falling back to sequential processing")
-            # Fallback to sequential processing
-            for args in args_list:
-                fragment_index, counts = _measure_single_fragment(args)
-                counts_for_each_fragment[fragment_index] = counts
+        # Separate fragment indices and circuits
+        fragment_indices = [frag_idx for frag_idx, _ in results]
+        circuits = [circuit for _, circuit in results]
+
+        # Transpile and simulate this batch
+        transpiled_circuits = transpile(circuits, simulator, optimization_level=1)
+        result = simulator.run(transpiled_circuits, shots=shots).result()
+
+        for i, fragment_index in enumerate(fragment_indices):
+            counts_for_each_fragment[fragment_index] = result.get_counts(i)
+
+        # Clean up this batch
+        del circuits, transpiled_circuits, result, results
+        gc.collect()
 
     return counts_for_each_fragment
-
 
 def compute_commutator_gradient(H_qubit_op, generator_op, fragment_indices, counts_for_each_fragment, n_qubits, shots=8192):
     """
@@ -496,19 +522,19 @@ def bai_find_the_best_arm(current_circuit, H_qubit_op, generator_pool, fragment_
 
     while len(active_arms) > 1 and rounds < max_rounds:
         # More aggressive garbage collection for large systems
-        if len(active_qwc_groups) > 5000:
-            gc.collect()
+        gc.collect()
         rounds += 1
         print(f"Round {rounds}")
-        shots = 1024
+        shots = 512
         total_shots += shots
         total_measurements_across_fragments += shots * len(active_qwc_groups)
         measurements_trend_bai.append(total_measurements_across_fragments)
 
-        counts_for_each_fragment = get_counts_for_each_fragment(
+        counts_for_each_fragment = get_counts_for_each_fragment_batched(
             current_circuit,
             fragment_group_indices_map,
             active_qwc_groups,
+            n_qubits,
             shots=shots
         )
 
@@ -523,14 +549,8 @@ def bai_find_the_best_arm(current_circuit, H_qubit_op, generator_pool, fragment_
 
             # Use multiprocessing for parallel gradient computation - scale with system size
             # Limit processes more aggressively for very large systems to avoid memory issues
-            if len(active_qwc_groups) > 10000:
-                max_processes = min(4, len(active_arms))
-            elif len(active_qwc_groups) > 1000:
-                max_processes = min(cpu_count() - 2, len(active_arms))
-            else:
-                max_processes = min(cpu_count() - 4, len(active_arms))
 
-            num_processes = max_processes
+            num_processes = min(cpu_count() - 4, len(active_arms))
 
             try:
                 print(f"  Starting parallel gradient computation for {len(active_arms)} arms using {num_processes} processes...")
@@ -584,7 +604,6 @@ def bai_find_the_best_arm(current_circuit, H_qubit_op, generator_pool, fragment_
         active_qwc_groups = new_active_qwc_groups
 
         print(f"After round {rounds}, active_arms: {active_arms}")
-        print(f"After round {rounds}, means: {means}")
         print(f"After round {rounds}, number of fragments: {len(active_qwc_groups)}")
         gc.collect()
 
@@ -648,7 +667,7 @@ def adapt_vqe_qiskit(H_sparse_pauli_op, n_qubits, n_electrons, H_qubit_op, gener
                 # Optimize parameters using scipy.optimize.minimize
         def vqe_obj(x):
             circuit = create_ansatz_circuit(n_qubits, n_electrons, ansatz_ops, x)
-            energy = measure_expectation(circuit, H_sparse_pauli_op)
+            energy = measure_expectation(circuit, H_sparse_pauli_op, shots=1024)
             return energy
 
         # Minimal debugging for first iteration only
@@ -674,8 +693,8 @@ def adapt_vqe_qiskit(H_sparse_pauli_op, n_qubits, n_electrons, H_qubit_op, gener
             initial_guess = [best_param]
 
         # Use faster optimization method
-        res = minimize(vqe_obj, initial_guess, method='COBYLA',
-                      options={'maxiter': max_iter, 'disp': False, 'rhobeg': 0.1})
+        res = minimize(vqe_obj, initial_guess, method='Powell',
+                      options={'maxiter': max_iter, 'disp': False})
 
         params = list(res.x)
 
@@ -734,6 +753,10 @@ if __name__ == "__main__":
     fragment_group_indices_map, commutator_indices_map = get_commutator_maps_cached(
         H_qubit_op, generator_pool, n_qubits,
         molecule_name=mol, n_electrons=n_electrons, cache_file=cache_filename)
+
+    # print(f"Fragment Group Indices map: {fragment_group_indices_map}")
+    #
+    # exit()
 
     print(f"QWC groups found: {len(fragment_group_indices_map)}")
     print(f"Commutator mappings for {len(commutator_indices_map)} operators")
